@@ -1,0 +1,13 @@
+.idea
+.vscode
+web3py
+venv/
+bin/
+node_modules
+build/
+__pycache__/
+.py*
+node/
+package-lock.json
+*checkpoint.ipynb
+.DS_Store
