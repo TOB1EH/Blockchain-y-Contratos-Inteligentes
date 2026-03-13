@@ -54,6 +54,9 @@ def preparar_nuevo_bloque(bloque_anterior: bytes, email: str) -> bytearray:
     num_bloque_nuevo = num_bloque_anterior + 1
 
     # 2. Timestamp: se obtiene la hora actual en segundos
+    # Seria mas conveniente obtener la hora actual dentro del bucle infinito cada cierto tiempo
+    # para que no se quede con un timestamp muy viejo, pero por simplicidad se lo obtiene una
+    # sola vez al preparar el bloque, lo cual es menos costoso computacionalmente hablando.
     nuevo_timestamp = int(time.time())
 
     # 3. Target: se copia exactamente los 8 bytes del objetivo del bloque anterior

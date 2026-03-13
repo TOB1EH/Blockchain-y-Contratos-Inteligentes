@@ -44,10 +44,10 @@ pip install -r requirements.txt
 
 **Ejecución**
 
-Con el entorno virtual activado, ejecuta el script principal:
+Con el entorno virtual activado, ejecutar el script:
 
 ```bash
-python3 main.py
+python3 colision.py
 ```
 
 El script imprimirá en consola el progreso de la búsqueda, los mensajes que colisionan, sus respectivos hashes, y la respuesta final del servidor de la materia.
