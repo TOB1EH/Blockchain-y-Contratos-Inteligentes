@@ -47,6 +47,7 @@ def firmar_mensaje(server:str, email: str, mensaje: str) -> dict:
     """
 
     # El servidor espera el mensaje en base64
+    # decode() convierte el resultado de b64encode de bytes a string para enviarlo en el POST
     mensaje_b64 = base64.b64encode(mensaje.encode()).decode()
 
     url = f"{server}/dsa/{email}/sign"
