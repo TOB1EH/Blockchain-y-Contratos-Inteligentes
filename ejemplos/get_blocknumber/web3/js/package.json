@@ -1,0 +1,15 @@
+{
+  "name": "get_blocknumber.js",
+  "version": "1.0.0",
+  "description": "Para instalar las dependencias, ejecutar `npm install`",
+  "main": "get_blocknumber.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "web3": "^4.6.0"
+  }
+}
