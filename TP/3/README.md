@@ -87,3 +87,57 @@ La forma más sencilla de implementar estas funcionalidades es utilizando la bib
 ```
 
 Puede encontrarse documentación sobre esta biblioteca en [https://web3py.readthedocs.io/](https://web3py.readthedocs.io/)
+
+## 5. Ejecución de los scripts
+
+### bfa_funds.py
+
+Gestiona fondos en la red BFA. Requiere activar la cuenta en geth antes de transferencias.
+
+**Consultar balance:**
+```bash
+python3 bfa_funds.py balance --account 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12 --unit ether
+```
+
+**Listar cuentas:**
+```bash
+python3 bfa_funds.py accounts
+```
+
+**Transferir ether** (después de desbloquear la cuenta en geth):
+```bash
+# En consola geth:
+personal.unlockAccount("0xAbCdEf1234567890AbCdEf1234567890AbCdEf12", "password", 0)
+
+# En terminal:
+python3 bfa_funds.py transfer --from 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12 \
+                               --to 0x1234567890AbCdEf1234567890AbCdEf12345678 \
+                               --amount 1 --unit wei
+```
+
+### show_transactions.py
+
+Analiza transacciones en un rango de bloques con filtrado opcional.
+
+**Transacciones en rango:**
+```bash
+python3 show_transactions.py --first-block 1000 --last-block 1100 --short
+```
+
+**Filtrar por direcciones:**
+```bash
+python3 show_transactions.py --first-block 100 --last-block 200 \
+                             0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+```
+
+**Exportar como GraphViz:**
+```bash
+python3 show_transactions.py --first-block 100 --last-block 200 --format graphviz --short > transacciones.dot
+dot -Tpng transacciones.dot -o transacciones.png
+```
+
+**Con descubrimiento en cascada:**
+```bash
+python3 show_transactions.py --first-block 100 --last-block 500 \
+                             0xAbCdEf1234567890AbCdEf1234567890AbCdEf12 --add
+```
