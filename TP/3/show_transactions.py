@@ -129,8 +129,13 @@ def address(x):
     raise argparse.ArgumentTypeError(f"Invalid address: '{x}'")
 
 
-if __name__ == "__main__":
-    DEFAULT_WEB3_URI = "../../blockchain-iua/bfatest/node/geth.ipc"
+def main():
+    """
+    Función principal del programa. Maneja la conexión al nodo y el flujo de ejecución
+    según los comandos ingresados por el usuario.
+    """
+
+    DEFAULT_WEB3_URI = "̣̣~/blockchain-iua/bfatest/node/geth.ipc"
 
     # Configurar un parser de argumentos para manejar la entrada por consola del usuario.
     parser = argparse.ArgumentParser()
@@ -275,3 +280,7 @@ if __name__ == "__main__":
         imprimir_plain(transacciones_encontradas, args.short)
     else:
         imprimir_graphviz(transacciones_encontradas, args.short)
+
+# El bloque principal del programa. Se ejecuta solo si el script es corrido directamente.
+if __name__ == "__main__":
+    main()
