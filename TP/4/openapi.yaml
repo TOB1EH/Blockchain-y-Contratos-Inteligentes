@@ -1,0 +1,153 @@
+openapi: 3.0.3
+info:
+  title: Stamper API
+  description: |-
+    API REST que interactúa con el contrato inteligente Stamper para proporcionar funcionalidades de sello de tiempo (timestamping).
+    La API permite registrar hashes y consultar registros existentes en la blockchain.
+  version: 1.0.0
+servers:
+  - url: http://localhost:5000
+    description: Servidor de desarrollo local
+
+paths:
+  /stamped/{hash}:
+    get:
+      summary: Consultar un hash sellado
+      description: Obtiene la información de un sello de tiempo asociado a un hash específico.
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: El hash de 256 bits (en formato hexadecimal con prefijo 0x) que se desea consultar.
+          schema:
+            $ref: '#/components/schemas/Hash'
+      responses:
+        '200':
+          description: Éxito. El hash fue encontrado y se devuelve la información del sello.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StampedData'
+        '400':
+          description: Bad Request. El hash proporcionado no tiene un formato válido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not Found. El hash no ha sido registrado en el contrato.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /stamp:
+    post:
+      summary: Registrar un nuevo hash
+      description: |-
+        Registra un nuevo hash en el contrato.
+        - Si solo se provee el `hash`, se invoca el método `stamp`.
+        - Si se proveen `hash` y `signature`, se invoca el método `stampSigned`.
+      requestBody:
+        required: true
+        description: Objeto JSON con el hash a registrar y una firma opcional.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StampRequest'
+      responses:
+        '201':
+          description: Creado. El hash ha sido registrado exitosamente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StampSuccessResponse'
+        '400':
+          description: Bad Request. El cuerpo de la solicitud es inválido, el content-type no es `application/json` o los campos tienen un formato incorrecto.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden. El hash ya ha sido registrado previamente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StampConflictError'
+
+components:
+  schemas:
+    Hash:
+      type: string
+      description: Un hash de 256 bits representado como una cadena hexadecimal de 64 caracteres con prefijo '0x'.
+      pattern: '^0x[a-fA-F0-9]{64}$'
+      example: '0x836a97e0ff6a85dd2746a39ed71171595759c02beda2d45d0280e0cd19ba3c34'
+    Address:
+      type: string
+      description: Una dirección de Ethereum representada como una cadena hexadecimal de 40 caracteres con prefijo '0x'.
+      pattern: '^0x[a-fA-F0-9]{40}$'
+      example: '0xe694177c2576f6644Cbd0b24bE32a323f88A08D5'
+    Signature:
+      type: string
+      description: Una firma ECDSA de Ethereum (65 bytes) representada como una cadena hexadecimal de 130 caracteres con prefijo '0x'.
+      pattern: '^0x[a-fA-F0-9]{130}$'
+      example: '0x1b8a...(130 caracteres hexadecimales en total)'
+    
+    TransactionHash:
+      type: string
+      description: Hash de una transacción de Ethereum, representado como una cadena hexadecimal de 64 caracteres con prefijo '0x'.
+      pattern: '^0x[a-fA-F0-9]{64}$'
+      example: '0x4d2d0d5711a347740aa769840b3a623cad1323476600cbea5d318749b7525cba'
+
+    StampedData:
+      type: object
+      properties:
+        signer:
+          $ref: '#/components/schemas/Address'
+        blockNumber:
+          type: integer
+          format: int64
+          description: El número de bloque en el que se realizó el registro.
+          example: 10297664
+      required:
+        - signer
+        - blockNumber
+
+    StampRequest:
+      type: object
+      properties:
+        hash:
+          $ref: '#/components/schemas/Hash'
+        signature:
+          $ref: '#/components/schemas/Signature'
+      required:
+        - hash
+
+    StampSuccessResponse:
+      type: object
+      properties:
+        transaction:
+          $ref: '#/components/schemas/TransactionHash'
+        blockNumber:
+          type: integer
+          format: int64
+          description: El número de bloque en el que se confirmó la transacción.
+          example: 19917226
+      required:
+        - transaction
+        - blockNumber
+
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Mensaje descriptivo del error.
+          example: 'El hash no ha sido registrado'
+      required:
+        - message
+
+    StampConflictError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - $ref: '#/components/schemas/StampedData'
