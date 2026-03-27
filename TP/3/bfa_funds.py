@@ -14,7 +14,7 @@ from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 
 # URI por defecto para conectarse al nodo geth de BFA. Se puede cambiar con --uri
-DEFAULT_WEB3_URI = "../../blockchain-iua/bfatest/node/geth.ipc"
+DEFAULT_WEB3_URI = "̣~/blockchain-iua/bfatest/node/geth.ipc"
 
 def balance(w3, account, unit):
     """Imprime el balance de una cuenta
@@ -94,7 +94,12 @@ def address(x):
             pass
     raise argparse.ArgumentTypeError(f"Invalid address: '{x}'")
 
-if __name__ == "__main__":
+def main():
+    """
+    Función principal del programa. Maneja la conexión al nodo y el flujo de ejecución
+    según los comandos ingresados por el usuario.
+    """
+
     # Configurar un parser de argumentos para manejar la entrada por consola del usuario.
     # Es un analizador de argumentos de linea de comandos con multiples subcomandos.
     parser = argparse.ArgumentParser(description=
@@ -158,7 +163,7 @@ if __name__ == "__main__":
         choices=['wei', 'Kwei', 'Mwei', 'Gwei', 'microether', 'milliether','ether'],
         default='wei'
     )
-    parser_accounts = subparsers.add_parser(
+    subparsers.add_parser(
         "accounts",
         help="Lista las cuentas de un nodo"
     )
@@ -198,3 +203,7 @@ if __name__ == "__main__":
         transfer(w3, args.src, args.dst, args.amount, args.unit)
     elif args.command == "accounts":
         accounts(w3)
+
+# El bloque principal del programa. Se ejecuta solo si el script es corrido directamente.
+if __name__ == "__main__":
+    main()
