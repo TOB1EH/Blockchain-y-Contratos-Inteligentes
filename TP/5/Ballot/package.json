@@ -1,0 +1,26 @@
+{
+  "name": "ballot",
+  "version": "1.0.0",
+  "description": "",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "hardhat test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^4.0.8",
+    "@nomicfoundation/hardhat-ethers-chai-matchers": "^3.0.5",
+    "@nomicfoundation/hardhat-mocha": "^3.0.16",
+    "@nomicfoundation/hardhat-network-helpers": "^3.0.5",
+    "hardhat": "^3.0.0"
+  },
+  "overrides": {
+    "diff": "8.0.4",
+    "serialize-javascript": "7.0.5"
+  }
+}
