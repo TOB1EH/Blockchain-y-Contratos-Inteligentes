@@ -128,7 +128,7 @@ describe("Ballot", function () {
 
     it("Should not allow withdrawing right to vote if not given", async function () {
       const { ballot, accounts } = await loadFixture(deployBallotFixture);
-      await expect(ballot.withdrawRightToVote(await signerAddress(accounts[1]))).to.be.revertedWith("Voter has no right to vote");
+      await expect(ballot.withdrawRightToVote(await signerAddress(accounts[1]))).to.be.revertedWith("Voter has no right to vote.");
     });
 
     it("Should not allow others to withdraw right to vote", async function () {
@@ -144,7 +144,7 @@ describe("Ballot", function () {
       const { ballot, accounts } = await loadFixture(deployBallotFixture);
       const account1Address = await signerAddress(accounts[1]);
       await ballot.giveRightToVote(account1Address);
-      await expect(ballot.giveRightToVote(account1Address)).to.be.revertedWith("Voter already has right to vote");
+      await expect(ballot.giveRightToVote(account1Address)).to.be.revertedWith("Voter already has right to vote.");
     });
 
     it("Should not allow voting before starting", async function () {
