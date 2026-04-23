@@ -1,0 +1,20 @@
+{
+  "name": "sign-transaction-js",
+  "version": "1.0.0",
+  "description": "Transferencia firmada de ETH con ethers",
+  "main": "transfer_signed.js",
+  "scripts": {
+    "start": "node transfer_signed.js",
+    "help": "node transfer_signed.js --help"
+  },
+  "keywords": [
+    "ethereum",
+    "ethers",
+    "transaction",
+    "sign"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.15.0"
+  }
+}
