@@ -11,7 +11,6 @@ node/
 package-lock.json
 *checkpoint.ipynb
 .DS_Store
-codigo_expuesto_en_clase/
 node_modules/
 artifacts/
 cache/
