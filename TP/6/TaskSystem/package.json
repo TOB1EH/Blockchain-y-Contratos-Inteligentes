@@ -1,0 +1,26 @@
+{
+  "name": "task-system",
+  "version": "1.0.0",
+  "description": "TP 6 TaskSystem",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "hardhat test",
+    "coverage": "hardhat test --coverage",
+    "deploy": "hardhat run scripts/deploy.js",
+    "deploy:sample": "hardhat run scripts/deploy-with-sample-data.js",
+    "deploy:sample:localhost": "hardhat run scripts/deploy-with-sample-data.js --network localhost",
+    "list-tasks": "node scripts/list-tasks-by-assignee.js"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^4.0.8",
+    "@nomicfoundation/hardhat-ethers-chai-matchers": "^3.0.5",
+    "@nomicfoundation/hardhat-mocha": "^3.0.16",
+    "@nomicfoundation/hardhat-network-helpers": "^3.0.5",
+    "hardhat": "^3.0.0"
+  },
+  "overrides": {
+    "diff": "8.0.4",
+    "serialize-javascript": "7.0.5"
+  }
+}
