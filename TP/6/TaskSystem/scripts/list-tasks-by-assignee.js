@@ -125,16 +125,133 @@ async function listTasksByAssignee({
   state,
   timestampSource,
 }) {
-  // TODO (estudiante): implementar validaciones de entrada.
-  void taskBoardContract;
-  void taskContractFactory;
-  void assignee;
-  void state;
-  void timestampSource;
+  // Obtener las direcciones de tareas segun el estado pedido (pending/in-progress/done) desde el contrato TaskBoard.
+  let taskAddresses; // Array de direcciones de tareas a consultar, inicialmente vacio.
+  if (state === "pending") {
+    taskAddresses = await taskBoardContract.todoByAssignee(assignee);
+  } else if (state === "in-progress") {
+    taskAddresses = await taskBoardContract.inProgressByAssignee(assignee);
+  } else if (state === "done") {
+    taskAddresses = await taskBoardContract.doneByAssignee(assignee);
+  }
 
-  // TODO (estudiante): implementar consulta por estado, armado de contratos Task
-  // y resolucion de timestamps por contrato o por eventos.
-  throw new Error("listTasksByAssignee() no implementada");
+  // Como el provider viene del TaskBoard y no de cada Task individual, se obtiene el provider del contrato TaskBoard
+  // para usarlo en las funciones auxiliares que resuelven timestamps desde eventos.
+  const provider = taskBoardContract.runner.provider;
+
+  // Para cada dirección de tarea, construir su contrato ethers usando la factoria, y obtener sus datos
+  // relevantes (descripción y timestamps) usando las funciones del contrato y la función auxiliar resolveTimestamps.
+  // Se usa Promise.all para ejecutar las consultas en paralelo y esperar a que todas terminen antes de continuar.
+  const results = await Promise.all(
+    taskAddresses.map(async (taskAddress) => {
+      const task = taskContractFactory(taskAddress); // Construir contrato Task para la dirección dada.
+      const description = await task.description(); // Obtener la descripción de la tarea desde el contrato Task.
+      const timestamps = await resolveTimestamps(task, state, timestampSource, provider); // Obtener los timestamps relevantes de la tarea usando la función auxiliar, según la fuente indicada.
+      return { taskAddress, description, timestamps }; // Devolver un objeto con la dirección de la tarea, su descripción y los timestamps obtenidos.
+    })
+  );
+
+  return results;
+}
+
+/* FUNCIONES AUXILIARES */
+
+/**
+ *  Función auxiliar para resolver los timestamps relevantes de una tarea según la fuente indicada (contract o events).
+ *  - Si timestampSource es "contract", obtiene los timestamps directamente desde las funciones del contrato Task.
+ *  - Si timestampSource es "events", obtiene los timestamps a partir de los eventos emitidos por el contrato Task.
+ *  - Devuelve un objeto con los timestamps relevantes para la tarea (por ejemplo: { createdAt, startedAt, completedAt }).
+ *  - Lanza error si timestampSource no es válido o si ocurre algún problema al obtener los datos.
+ */
+async function resolveTimestamps(task, state, timestampSource, provider) {
+  if (timestampSource === "contract") {
+    return resolveTimestampsFromContract(task, state, provider);
+  } else {
+    return resolveTimestampsFromEvents(task, state, provider);
+  }
+}
+
+/**
+ *  Función auxiliar para resolver los timestamps relevantes de una tarea según la fuente indicada (contract o events).
+ * - Obtiene los timestamps directamente desde las funciones del contrato Task.
+ * - Devuelve un objeto con los timestamps relevantes para la tarea (por ejemplo: { createdAt, startedAt, completedAt }).
+ * - Lanza error si ocurre algún problema al obtener los datos.
+ */
+async function resolveTimestampsFromContract(task, state, provider) {
+  // Siempre se leen los tres, pero solo se incluyen los que correspondan al estado pedido (pending/in-progress/done) en el objeto final.
+  const assignedAt = await task.assignedAt();
+  const startedAt  = await task.startedAt();
+  const completedAt = await task.completedAt();
+
+  // Convertir los timestamps a formato ISO usando toISOString
+  const timestamps = {
+    assignedAt: toISOString(assignedAt),
+  };
+
+  if (state === "in-progress" || state === "done") {
+    timestamps.startedAt = toISOString(startedAt);
+  }
+
+  if (state === "done") {
+    timestamps.completedAt = toISOString(completedAt);
+  }
+
+  return timestamps;
+}
+
+/**
+ *  Función auxiliar para resolver los timestamps relevantes de una tarea según la fuente indicada (contract o events).
+ * - Obtiene los timestamps a partir de los eventos emitidos por el contrato Task.
+ * - Para cada evento relevante (TaskAssigned, TaskStarted, TaskCompleted), obtiene el bloque en el que se emitió y extrae su timestamp.
+ * - Devuelve un objeto con los timestamps relevantes para la tarea (por ejemplo: { createdAt, startedAt, completedAt }).
+ * - Lanza error si ocurre algún problema al obtener los datos.
+ */
+async function resolveTimestampsFromEvents(task, state, provider) {
+  // Obtener el bloque del evento TaskAssigned y extraer su timestamp
+  const assignedEvents = await task.queryFilter(task.filters.TaskAssigned(null, null));
+  // Validar que existe el evento antes de acceder a él
+  if (!assignedEvents || assignedEvents.length === 0) {
+    throw new Error("No TaskAssigned event found for this task");
+  }
+  const assignedBlock  = await provider.getBlock(assignedEvents[0].blockNumber);
+  const timestamps = {
+    assignedAt: toISOString(assignedBlock.timestamp),
+  };
+
+  if (state === "in-progress" || state === "done") {
+    // Obtener el bloque del evento TaskStarted y extraer su timestamp
+    const startedEvents = await task.queryFilter(task.filters.TaskStarted(null));
+    if (!startedEvents || startedEvents.length === 0) {
+      throw new Error("No TaskStarted event found for this task");
+    }
+    const startedBlock  = await provider.getBlock(startedEvents[0].blockNumber);
+    // Convertir el timestamp del bloque a formato ISO usando toISOString
+    timestamps.startedAt = toISOString(startedBlock.timestamp);
+  }
+
+  if (state === "done") {
+    // Obtener el bloque del evento TaskCompleted y extraer su timestamp
+    const completedEvents = await task.queryFilter(task.filters.TaskCompleted(null));
+    if (!completedEvents || completedEvents.length === 0) {
+      throw new Error("No TaskCompleted event found for this task");
+    }
+    const completedBlock  = await provider.getBlock(completedEvents[0].blockNumber);
+    timestamps.completedAt = toISOString(completedBlock.timestamp);
+  }
+
+  return timestamps;
+}
+
+/**
+ * Función auxiliar para convertir un timestamp (en formato UNIX, ya sea number o BigInt) a formato ISO (string).
+ * - Recibe un timestamp en formato UNIX (segundos desde epoch) que puede ser un number o un BigInt.
+ * - Convierte el timestamp a milisegundos multiplicándolo por 1000, y luego lo convierte a una fecha usando new Date().
+ * - Devuelve la fecha en formato ISO usando toISOString().
+ * - Lanza error si el timestamp no es un número válido o si ocurre algún problema durante la conversión.
+ */
+function toISOString(timestamp) {
+  // timestamp puede ser un BigInt (viene del contrato) o un number (viene del bloque)
+  return new Date(Number(timestamp) * 1000).toISOString();
 }
 
 // Punto de entrada CLI: parsea argumentos, arma contratos/factorías
