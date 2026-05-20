@@ -15,3 +15,12 @@ node_modules/
 artifacts/
 cache/
 AGENTS.md
+# Security / Sensitive patterns
+.env
+.env.local
+.env.*.local
+credentials.json
+secrets.json
+*.pem
+.aws/
+.ssh/
