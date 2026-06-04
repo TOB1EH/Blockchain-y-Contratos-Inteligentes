@@ -2,6 +2,7 @@
 .vscode
 web3py
 venv/
+venv-test/
 bin/
 node_modules
 build/
