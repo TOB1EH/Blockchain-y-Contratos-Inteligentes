@@ -1,4 +1,4 @@
-# Trabajo Práctico 9 - API
+# Trabajo Práctico 10 - API REST
 
 ## Consigna
 
@@ -29,7 +29,11 @@ La API debe proveer los siguientes *endpoints*:
   * `callId`: Hash que identifica al llamado. Debe ser exactamente `keccak256(rlp([title_utf8, description_utf8]))`, donde `title` y `description` son los demás campos del cuerpo **después de eliminar el whitespace al final**, y `rlp` es la codificación RLP estándar de la lista de dos elementos binarios.
   * `title`: Título del llamado. Se eliminan los espacios en blanco al final antes de validar. El título vacío no es válido. No puede superar 512 bytes codificado en UTF-8.
   * `description`: Descripción del llamado. Se eliminan los espacios en blanco al final antes de validar. La descripción vacía es válida. No puede superar 4096 bytes codificado en UTF-8.
-  * `signature`: Firma con la clave privada del creador autorizado. El mensaje a firmar es la concatenación de: el prefijo `"createPOST"` (10 bytes ASCII), la dirección del contrato `CFPFactory` (20 bytes), y los 32 bytes del `callId`; en total 62 bytes binarios. Antes de ser firmado, se le agrega el prefijo estándar de Ethereum `\x19Ethereum Signed Message:\n62`. La API recupera la dirección del firmante a partir de la firma y verifica que esté autorizada en el contrato `CFPFactory`.
+   * `signature`: Firma EIP-712 de tipo `CreateRequest`. El dominio compartido se define más abajo. El mensaje contiene los campos:
+     * `"operation"`: `"create"`
+     * `"contract"`: dirección del contrato `CFPFactory` (address)
+     * `"callId"`: el identificador del llamado (`bytes32`)
+     La API recupera la dirección firmante a partir de la firma y verifica que esté autorizada en el contrato `CFPFactory`.
 * Retorno exitoso:
   * Código HTTP: 201
   * Cuerpo: Un objeto JSON con un campo "message" con valor OK.
@@ -63,13 +67,13 @@ La API debe proveer los siguientes *endpoints*:
 * Cuerpo: Un objeto JSON con los siguientes campos:
   * `address`: Dirección del solicitante.
   * `name`: Nombre del solicitante. Se almacena localmente asociado a la dirección. Se eliminan los espacios en blanco al final antes de validar. El nombre vacío no es válido. No puede superar 512 bytes codificado en UTF-8.
-  * `signature`: Firma con la clave privada del solicitante. El mensaje a firmar es la concatenación de:
-    1. El prefijo ASCII `registerPOST` (12 bytes).
-    2. La dirección del contrato en bytes (20 bytes).
-    3. El valor 0 codificado como entero *big-endian* de 32 bytes.
-    4. El nombre del solicitante codificado en UTF-8.
+   * `signature`: Firma EIP-712 de tipo `RegisterRequest`. El dominio compartido se define más abajo. El mensaje contiene los campos:
+     * `"operation"`: `"register"`
+     * `"contract"`: dirección del contrato `CFPFactory`
+     * `"nonce"`: `0` (nonce inicial para registro)
+     * `"name"`: nombre del solicitante
 
-    Antes de ser firmado, al mensaje se le agrega el prefijo estándar de Ethereum `\x19Ethereum Signed Message:\n` seguido de la longitud del mensaje en bytes en formato decimal ASCII. La API verifica que la dirección recuperada de la firma coincida con el campo `address`.
+     La API recupera la dirección firmante y verifica que coincida con el campo `address`. Tras un registro exitoso el nonce de la dirección pasa a 1.
 * Retorno exitoso:
   * Código HTTP: 200
   * Cuerpo: Un objeto JSON con un campo `status` cuyo valor es `"pending"`, `"registered"` o `"authorized"`.
@@ -116,13 +120,13 @@ La API debe proveer los siguientes *endpoints*:
 * Argumento: `:address` corresponde a la dirección cuyo nombre se desea actualizar.
 * Cuerpo: Un objeto JSON con los siguientes campos:
   * `name`: Nuevo nombre del solicitante. Se eliminan los espacios en blanco al final antes de validar. El nombre vacío no es válido. No puede superar 512 bytes codificado en UTF-8.
-  * `signature`: Firma con la clave privada correspondiente a `:address`. El mensaje a firmar es la concatenación de:
-    1. El prefijo ASCII `registrationsPATCH` (18 bytes).
-    2. La dirección del contrato en bytes (20 bytes).
-    3. El nonce actual de la dirección, codificado como entero *big-endian* de 32 bytes (obtenido mediante `GET /registrations/:address`).
-    4. El nuevo nombre codificado en UTF-8.
+   * `signature`: Firma EIP-712 de tipo `RegisterRequest`. El dominio compartido se define más abajo. El mensaje contiene los campos:
+     * `"operation"`: `"update"`
+     * `"contract"`: dirección del contrato `CFPFactory`
+     * `"nonce"`: nonce actual de la dirección (obtenido mediante `GET /registrations/:address`)
+     * `"name"`: nuevo nombre
 
-    Antes de ser firmado, al mensaje se le agrega el prefijo estándar de Ethereum `\x19Ethereum Signed Message:\n` seguido de la longitud del mensaje en bytes en formato decimal ASCII. La API verifica que la dirección recuperada de la firma coincida con `:address`, y que el nonce de la firma coincida con el nonce almacenado. Tras una actualización exitosa el nonce se incrementa, invalidando la firma utilizada.
+     La API verifica que la dirección recuperada de la firma coincida con `:address`, y que el nonce de la firma coincida con el nonce almacenado. Tras una actualización exitosa el nonce se incrementa, invalidando la firma utilizada.
 * Retorno exitoso:
   * Código HTTP: 200
   * Cuerpo: Un objeto JSON con un campo "message" con valor OK.
@@ -201,6 +205,30 @@ La API debe proveer los siguientes *endpoints*:
   * Cuerpo: Un objeto JSON con un campo entero:
     * `nonce`: valor actual del nonce del administrador. Vale 1 al inicio y se incrementa en 1 tras cada operación de autorización o desautorización exitosa.
 
+### `/admin/address`
+
+* Devuelve la dirección del administrador de la API. La interfaz web lo usa para determinar si la cuenta conectada corresponde al administrador.
+* Método: `GET`
+* Retorno exitoso:
+  * Código HTTP: 200
+  * Cuerpo: Un objeto JSON con un campo `address` que contiene la dirección del administrador.
+
+### `/creators`
+
+* Lista todos los creadores registrados en la API (excluye archivados).
+* Método: `GET`
+* Retorno exitoso:
+  * Código HTTP: 200
+  * Cuerpo: Un objeto JSON con un campo `creators` que contiene una lista de objetos con `address`, `name`, `status` y `nonce`.
+
+### `/admin/pending`
+
+* Lista las solicitudes de registro pendientes de autorización (estado `registered` en la DB).
+* Método: `GET`
+* Retorno exitoso:
+  * Código HTTP: 200
+  * Cuerpo: Un objeto JSON con un campo `pending` que contiene una lista de objetos con `address`, `name`, `status` y `nonce`.
+
 ### `/authorize/:address`
 
 * Permite al administrador autorizar a una dirección para crear llamados.
@@ -208,13 +236,13 @@ La API debe proveer los siguientes *endpoints*:
 * Content-type: `application/json`
 * Argumento: `:address` corresponde a la dirección a autorizar.
 * Cuerpo: Un objeto JSON con el siguiente campo:
-  * `signature`: Firma con la clave privada del administrador (`CFP_ADMIN_ADDRESS`). El mensaje a firmar es la concatenación de:
-    1. El prefijo ASCII `authorizePOST` (13 bytes).
-    2. La dirección del contrato en bytes (20 bytes).
-    3. El nonce actual del administrador, codificado como entero *big-endian* de 32 bytes (obtenido mediante `GET /admin/nonce`).
-    4. La dirección a autorizar en bytes (20 bytes).
+   * `signature`: Firma EIP-712 de tipo `AdminActionRequest`. El dominio compartido se define más abajo. El mensaje contiene los campos:
+     * `"operation"`: `"authorize"`
+     * `"contract"`: dirección del contrato `CFPFactory`
+     * `"nonce"`: nonce actual del administrador (obtenido mediante `GET /admin/nonce`)
+     * `"target"`: dirección a autorizar
 
-    Antes de ser firmado, al mensaje se le agrega el prefijo estándar de Ethereum `\x19Ethereum Signed Message:\n` seguido de la longitud del mensaje en bytes en formato decimal ASCII. La API verifica que la dirección recuperada de la firma coincida con `CFP_ADMIN_ADDRESS`. Tras una operación exitosa el nonce se incrementa, invalidando la firma utilizada.
+     La API verifica que la dirección recuperada de la firma coincida con `CFP_ADMIN_ADDRESS`. Tras una operación exitosa el nonce se incrementa, invalidando la firma utilizada.
 * Retorno exitoso:
   * Código HTTP: 200
   * Cuerpo: Un objeto JSON con un campo "message" con valor OK.
@@ -239,7 +267,7 @@ La API debe proveer los siguientes *endpoints*:
 * Content-type: `application/json`
 * Argumento: `:address` corresponde a la dirección a desautorizar.
 * Cuerpo: Un objeto JSON con el siguiente campo:
-  * `signature`: Firma con la clave privada del administrador (`CFP_ADMIN_ADDRESS`). El mensaje a firmar es idéntico al de `/authorize/:address`, salvo que el prefijo es `unauthorizePOST` (15 bytes) en lugar de `authorizePOST`.
+   * `signature`: Firma EIP-712 de tipo `AdminActionRequest`. Idéntica a `/authorize/:address` pero con `"operation": "unauthorize"`.
 * Retorno exitoso:
   * Código HTTP: 200
   * Cuerpo: Un objeto JSON con un campo "message" con valor OK.
@@ -393,6 +421,55 @@ La API debe proveer los siguientes *endpoints*:
     |propuesta inexistente     | 404    | PROPOSAL_NOT_FOUND   |
     |desconocida               | 500    | INTERNAL_ERROR       |
 
+## Firma EIP-712
+
+En el Práctico 10 se migró de EIP-191 (mensajes planos con prefijo `\x19Ethereum Signed Message`) a EIP-712 (mensajes tipados estructurados). El cambio afecta a todos los endpoints que reciben una firma: `POST /create`, `POST /register`, `PATCH /registrations/:address`, `POST /authorize/:address` y `POST /unauthorize/:address`.
+
+### Dominio compartido
+
+Todas las firmas EIP-712 comparten el mismo dominio:
+
+```json
+{
+  "name": "CFP API",
+  "version": "1",
+  "chainId": <id de la cadena>,
+  "verifyingContract": "<dirección del contrato CFPFactory>"
+}
+```
+
+### Tipos de mensaje
+
+**`CreateRequest`** — usado en `POST /create`:
+
+| Campo | Tipo | Valor |
+|-------|------|-------|
+| `operation` | `string` | `"create"` |
+| `contract` | `address` | Dirección del contrato `CFPFactory` |
+| `callId` | `bytes32` | Hash que identifica al llamado |
+
+**`RegisterRequest`** — usado en `POST /register` y `PATCH /registrations/:address`:
+
+| Campo | Tipo | Registro | Actualización |
+|-------|------|----------|---------------|
+| `operation` | `string` | `"register"` | `"update"` |
+| `contract` | `address` | Dirección del `CFPFactory` | Dirección del `CFPFactory` |
+| `nonce` | `uint256` | `0` | Nonce actual (de `GET /registrations/:address`) |
+| `name` | `string` | Nombre del solicitante | Nuevo nombre |
+
+**`AdminActionRequest`** — usado en `POST /authorize/:address` y `POST /unauthorize/:address`:
+
+| Campo | Tipo | Autorizar | Desautorizar |
+|-------|------|-----------|--------------|
+| `operation` | `string` | `"authorize"` | `"unauthorize"` |
+| `contract` | `address` | Dirección del `CFPFactory` | Dirección del `CFPFactory` |
+| `nonce` | `uint256` | Nonce actual del admin (de `GET /admin/nonce`) | Nonce actual del admin |
+| `target` | `address` | Dirección a autorizar | Dirección a desautorizar |
+
+### Implementación en el servidor
+
+La API utiliza `encode_typed_data` de `eth_account` para construir los mensajes EIP-712 y `Account.recover_message` para recuperar la dirección firmante. Las definiciones de tipos están centralizadas en la variable `TYPE_DEFINITIONS` y el helper `make_eip712_message()` construye el mensaje completo a partir del tipo primario y los datos.
+
 ## Diferencias con el Práctico 8
 
 ### Endpoints modificados
@@ -441,6 +518,34 @@ Se agrega la variable de entorno `CFP_ADMIN_ADDRESS`, que contiene la dirección
 ### Mensajes
 
 Se eliminan `INVALID_TIME_FORMAT` e `INVALID_CLOSING_TIME`. Se incorporan `INVALID_NAME`, `NAME_TOO_LONG`, `TITLE_TOO_LONG`, `DESCRIPTION_TOO_LONG`, `TOO_MANY_FILES`, `PROOF_TOO_LONG`, `NOT_REGISTERED` y `NONCE_OVERFLOW`.
+
+### Diferencias con el Práctico 9
+
+#### Migración a EIP-712
+
+Todos los endpoints que procesan firmas (create, register, registrations PATCH, authorize, unauthorize) migraron de EIP-191 a EIP-712. El cambio principal es que el mensaje a firmar ya no es una concatenación plana de bytes con prefijo `\x19Ethereum Signed Message`, sino un mensaje tipado estructurado con dominio y tipos definidos. Esto permite que MetaMask muestre al usuario los campos del mensaje de forma legible antes de firmar.
+
+#### Nuevos endpoints
+
+* **`GET /admin/address`**: Devuelve la dirección del administrador. La interfaz web lo usa para determinar si la cuenta conectada es la administradora.
+* **`GET /creators`**: Lista todos los creadores registrados (excluye archivados). Usado por la vista pública del frontend.
+* **`GET /admin/pending`**: Lista las solicitudes pendientes de autorización. Usado por el panel de administración.
+
+#### Endpoints modificados
+
+* **`POST /register`**: Incorpora validación `ADMIN_CANNOT_REGISTER`: si la dirección firmante coincide con `CFP_ADMIN_ADDRESS`, se rechaza con 403. La cuenta administradora no puede registrarse como creador.
+* **`PATCH /registrations/:address`**: Idéntica validación: si `:address` es la cuenta admin, se rechaza con 403.
+* **`POST /authorize/:address`**: Ahora requiere que la dirección a autorizar no esté archivada (`status != "archived"`). Si lo está, devuelve `NOT_REGISTERED` (404).
+
+#### Configuración
+
+Se agregó la variable de entorno `CFP_CONTRACTS_DIR` (por defecto `../contracts`) que permite especificar la ruta al directorio de contratos compilados. La ruta de la base de datos se configura con `CFP_DB_PATH` (por defecto `cfp.db`).
+
+El script de despliegue (`scripts/deploy.js` en `contracts`) ahora deriva la cuenta administradora como Account 2 (`m/44'/60'/0'/0/2`) y la imprime como `CFP_ADMIN_ADDRESS`. Las tres variables (`CFP_MNEMONIC`, `CFP_FACTORY_ADDRESS`, `CFP_ADMIN_ADDRESS`) se imprimen listas para exportar.
+
+#### Nuevos mensajes
+
+Se incorpora `ADMIN_CANNOT_REGISTER`: "La cuenta administradora no puede registrarse como creador".
 
 ## Base de datos
 
@@ -629,6 +734,14 @@ CFP_MNEMONIC="..." CFP_FACTORY_ADDRESS="0x..." CFP_ADMIN_ADDRESS="0x..." \
   pytest test_apiserver.py
 ```
 
+### Ejecución de todos los tests
+
+```bash
+pytest test_apiserver.py -v
+```
+
+71 tests, todos con firmas EIP-712.
+
 ### Ejecución de un test individual
 
 ```bash
@@ -637,30 +750,44 @@ pytest test_apiserver.py::test_verify_proposal_proofs_onchain
 
 Los tests tienen dependencias de estado entre sí y están diseñados para ejecutarse en orden. La mayoría requiere que `test_register` y `test_create` hayan corrido antes para contar con cuentas autorizadas y llamados registrados en el sistema. Ejecutar un test aislado sin su estado previo puede producir fallas anticipadas (por ejemplo, `AssertionError` en `assert len(accounts) > 0`).
 
+### Total de tests
+
+**71 tests** que cubren:
+
+* Registro y autorización de creadores (con firmas EIP-712)
+* Creación y consulta de llamados
+* Registro de propuestas con pruebas de Merkle
+* Verificación de pruebas on-chain y off-chain
+* Validaciones de firma, nonce y direcciones
+* Casos borde: administrador no puede registrarse como creador
+
+Todas las firmas en los tests se generan con EIP-712 mediante `encode_typed_data` y se envían como parte del cuerpo de las solicitudes HTTP.
+
 ## Mensajes
 
-| ID                    | Mensaje                               |
-|-----------------------|---------------------------------------|
-| INVALID_ADDRESS       | "Dirección inválida"                  |
-| INVALID_SIGNATURE     | "Firma inválida"                      |
-| INVALID_MIMETYPE      | "Tipo MIME inválido"                  |
-| INVALID_CALLID        | "Identificador de llamado incorrecto" |
-| INVALID_PROPOSAL      | "Formato de propuesta incorrecto"     |
-| MISSING_FIELD         | "Campo requerido ausente"             |
-| NAME_TOO_LONG         | "Nombre demasiado largo"              |
-| TITLE_TOO_LONG        | "Título demasiado largo"              |
-| DESCRIPTION_TOO_LONG  | "Descripción demasiado larga"         |
-| TOO_MANY_FILES        | "Demasiados archivos"                 |
-| PROOF_TOO_LONG        | "Prueba de Merkle demasiado larga"    |
-| INVALID_NAME          | "Nombre inválido"                     |
-| INVALID_TITLE         | "Título inválido"                     |
-| ALREADY_IN_SYSTEM     | "Ya está registrado en el sistema"    |
-| ALREADY_CREATED       | "El llamado ya existe"                |
-| ALREADY_REGISTERED    | "La propuesta ya ha sido registrada"  |
-| CALLID_NOT_FOUND      | "El llamado no existe"                |
-| PROPOSAL_NOT_FOUND    | "La propuesta no existe"              |
-| UNAUTHORIZED          | "No autorizado"                       |
-| NOT_REGISTERED        | "La dirección no está registrada"     |
-| NONCE_OVERFLOW        | "Overflow de nonce"                   |
-| INTERNAL_ERROR        | "Error interno"                       |
-| OK                    | "OK"                                  |
+| ID                    | Mensaje                                      |
+|-----------------------|----------------------------------------------|
+| INVALID_ADDRESS       | "Dirección inválida"                         |
+| INVALID_SIGNATURE     | "Firma inválida"                             |
+| INVALID_MIMETYPE      | "Tipo MIME inválido"                         |
+| INVALID_CALLID        | "Identificador de llamado incorrecto"        |
+| INVALID_PROPOSAL      | "Formato de propuesta incorrecto"            |
+| MISSING_FIELD         | "Campo requerido ausente"                    |
+| NAME_TOO_LONG         | "Nombre demasiado largo"                     |
+| TITLE_TOO_LONG        | "Título demasiado largo"                     |
+| DESCRIPTION_TOO_LONG  | "Descripción demasiado larga"                |
+| TOO_MANY_FILES        | "Demasiados archivos"                        |
+| PROOF_TOO_LONG        | "Prueba de Merkle demasiado larga"           |
+| INVALID_NAME          | "Nombre inválido"                            |
+| INVALID_TITLE         | "Título inválido"                            |
+| ALREADY_IN_SYSTEM     | "Ya está registrado en el sistema"           |
+| ALREADY_CREATED       | "El llamado ya existe"                       |
+| ALREADY_REGISTERED    | "La propuesta ya ha sido registrada"         |
+| CALLID_NOT_FOUND      | "El llamado no existe"                       |
+| PROPOSAL_NOT_FOUND    | "La propuesta no existe"                     |
+| UNAUTHORIZED          | "No autorizado"                              |
+| NOT_REGISTERED        | "La dirección no está registrada"            |
+| NONCE_OVERFLOW        | "Overflow de nonce"                          |
+| ADMIN_CANNOT_REGISTER | "La cuenta administradora no puede registrarse como creador" |
+| INTERNAL_ERROR        | "Error interno"                              |
+| OK                    | "OK"                                         |

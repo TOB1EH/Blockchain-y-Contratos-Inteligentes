@@ -1,4 +1,4 @@
-# Trabajo Práctico 9 - Smart contracts
+# Trabajo Práctico 10 - Smart contracts
 
 El trabajo consiste en implementar dos contratos. El contrato `CFP` implementa un llamado a presentación de propuestas (*Call For Proposals*). Una propuesta está representada por el *hash* de un documento, que es registrada en el contrato antes de la fecha de cierre del llamado.
 
@@ -274,3 +274,79 @@ El contrato `CFPFactory` incorpora tres eventos que no estaban presentes en el P
 * `CreatorRegistered(address indexed creator)`: se emite cuando una cuenta llama a `register()` para solicitar autorización.
 * `CreatorAuthorized(address indexed creator)`: se emite cuando el dueño de la factoría autoriza a una cuenta mediante `authorize()`.
 * `CreatorUnauthorized(address indexed creator)`: se emite cuando el dueño de la factoría revoca la autorización de una cuenta mediante `unauthorize()`.
+
+## Diferencias con el Práctico 9
+
+Para el Práctico 10 se agregaron al contrato `CFP` los siguientes elementos para soportar la entrega de archivos post-cierre.
+
+### `DeliveryData` (nuevo struct)
+
+Estructura que representa la entrega de archivos asociada a una propuesta:
+
+```solidity
+struct DeliveryData {
+    bytes32 filesRoot;      // raíz del árbol de Merkle de los archivos entregados
+    address sender;          // dirección del emisor de la entrega
+    uint256 blockNumber;     // bloque en el que se registró la entrega
+    uint256 timestamp;       // timestamp del registro
+    bool delivered;          // bandera que indica si la entrega fue realizada
+}
+```
+
+### `FilesDelivered` (nuevo evento)
+
+Se emite cuando se registra exitosamente una entrega de archivos:
+
+```solidity
+event FilesDelivered(bytes32 indexed proposalId, bytes32 filesRoot, address sender, uint256 timestamp);
+```
+
+### `registerDelivery(bytes32 proposalId, bytes32 filesRoot)` (nuevo método público)
+
+Permite registrar en cadena la entrega final de archivos posterior al cierre del llamado.
+
+Restricciones:
+
+* La convocatoria debe haber cerrado (`block.timestamp > _closingTime`). Si no, revierte con "La convocatoria no ha cerrado".
+* La propuesta debe existir en el contrato (`proposalData[proposalId].blockNumber != 0`). Si no, revierte con "La propuesta no existe".
+* La entrega no debe haberse registrado previamente (`!_deliveries[proposalId].delivered`). Si ya existe, revierte con "La entrega ya fue registrada".
+
+Emite el evento `FilesDelivered`.
+
+### `deliveryData(bytes32 proposalId)` (nueva función view)
+
+Devuelve la estructura `DeliveryData` asociada a la propuesta. Si la propuesta no tiene entrega registrada, devuelve `DeliveryData` con `delivered == false`.
+
+### Decisiones de diseño
+
+* La estructura `DeliveryData` incluye un campo `filesRoot` (raíz Merkle) para que el servidor pueda verificar la integridad de los archivos entregados contra el compromiso original.
+* El sender de la entrega puede ser distinto del sender de la propuesta original (caso de entrega delegada por la API).
+* La bandera `delivered` permite distinguir entre una propuesta sin entrega (`delivered == false`) y una propuesta con entrega registrada. Sin esta bandera, un struct con todos sus campos en cero sería ambiguo.
+* Se usa `block.timestamp` en lugar de recibir un timestamp externo para garantizar integridad temporal on-chain.
+
+### Casos de prueba agregados (6 tests en `test/testCFP.js`)
+
+Los nuevos tests están en el bloque `"Entrega de archivos post-cierre"` dentro de `testCFP.js`:
+
+| Test | Descripción |
+|------|-------------|
+| `debe permitir registrar una entrega después del cierre` | Registra una propuesta, avanza el tiempo, llama a `registerDelivery` y verifica los campos de `DeliveryData` |
+| `debe emitir el evento FilesDelivered al registrar una entrega` | Verifica que el evento se emita con los argumentos correctos (proposalId, filesRoot, sender, timestamp) |
+| `debe rechazar la entrega si la convocatoria no ha cerrado` | Intenta registrar entrega antes del cierre; espera revert con "La convocatoria no ha cerrado" |
+| `debe rechazar la entrega si la propuesta no existe` | Intenta registrar entrega para un proposalId inexistente; espera revert con "La propuesta no existe" |
+| `debe rechazar la entrega duplicada` | Registra entrega dos veces para la misma propuesta; espera revert con "La entrega ya fue registrada" |
+| `debe devolver datos vacíos para una propuesta sin entrega` | Consulta `deliveryData()` para una propuesta sin entrega y verifica `delivered == false` y `blockNumber == 0` |
+
+Total: **67 tests** (61 de TP9 + 6 nuevos).
+
+### Script de despliegue (`scripts/deploy.js`)
+
+Cambios respecto al TP9:
+
+* **Exporta `deployments/CFPFactory.json`**: al desplegar, genera un archivo JSON con `address`, `chainId` y `abi` del contrato. La API y el frontend pueden leer este archivo para evitar direcciones hardcodeadas.
+* **Deriva la cuenta administradora**: imprime la dirección de la cuenta 2 (`m/44'/60'/0'/0/2`) como `CFP_ADMIN_ADDRESS`. Esta cuenta es distinta del deployer (índice 0) y se usa para firmar operaciones administrativas.
+* **Salida lista para exportar**: imprime los tres exports listos para copiar y pegar en la terminal de la API: `CFP_MNEMONIC`, `CFP_FACTORY_ADDRESS`, `CFP_ADMIN_ADDRESS`.
+
+### Paquetes y comandos
+
+Sin cambios respecto al TP9. Los comandos de compilación y tests son los mismos:
