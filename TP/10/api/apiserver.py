@@ -579,6 +579,9 @@ def register():
         return err(messages.MISSING_FIELD, 400)
     if not is_valid_address(address):
         return err(messages.INVALID_ADDRESS, 400)
+    # La cuenta administradora no puede registrarse como creador
+    if address.lower() == ADMIN_ADDRESS.lower():
+        return err(messages.ADMIN_CANNOT_REGISTER, 403)
 
     name = name.rstrip()
     if not name:
@@ -698,6 +701,8 @@ def patch_registration(address):
     """
     if not is_valid_address(address):
         return err(messages.INVALID_ADDRESS, 400)
+    if address.lower() == ADMIN_ADDRESS.lower():
+        return err(messages.ADMIN_CANNOT_REGISTER, 403)
 
     req = check_mimetype()
     if req is None:

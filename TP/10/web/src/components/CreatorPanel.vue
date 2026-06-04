@@ -28,6 +28,15 @@ watch(account, async () => {
   const addrRes = await api.getContractAddress()
   contractAddress.value = addrRes.data.address
   const regRes = await api.getRegistration(account.value)
+
+  // Detectar si es admin
+  const adminRes = await api.getAdminAddress()
+  if (account.value.toLowerCase() === adminRes.data.address.toLowerCase()) {
+    status.value = 'admin'
+    loadingStatus.value = false
+    return
+  }
+
   if (regRes.status === 200) {
     dbEntry.value = regRes.data
     // Si la API no devuelve 'name', significa que no estás en la base de datos
@@ -113,6 +122,9 @@ async function updateProfile() {
     <h2>Panel de Creador</h2>
     <div v-if="!isConnected"><p>Conecta tu wallet para ver este panel.</p></div>
     <div v-else-if="loadingStatus"><p>Cargando estado...</p></div>
+    <div v-else-if="status === 'admin'">
+      <p>No puedes registrarte como creador con la cuenta administradora.</p>
+    </div>
     <div v-else>
       <p><strong>Direccion:</strong> {{ account }}</p>
       <p><strong>Estado:</strong> {{ status || 'desconocido' }}</p>

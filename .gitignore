@@ -25,3 +25,6 @@ secrets.json
 *.pem
 .aws/
 .ssh/
+
+# base de datos
+cfp.db
