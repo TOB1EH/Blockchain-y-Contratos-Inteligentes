@@ -1,3 +1,8 @@
+"""
+Obtiene la dirección del administrador a partir de una frase mnemotécnica
+utilizando la biblioteca `eth_account`.
+"""
+
 from eth_account import Account
 
 Account.enable_unaudited_hdwallet_features()
