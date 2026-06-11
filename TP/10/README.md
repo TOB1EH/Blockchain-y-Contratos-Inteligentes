@@ -24,15 +24,15 @@ cd TP/10/contracts
 node scripts/deploy.js
 ```
 
-La salida del deploy imprime las tres variables necesarias para el resto del sistema:
-
-```
-CFP_FACTORY_ADDRESS=0x...
-CFP_MNEMONIC=test test test ...
-CFP_ADMIN_ADDRESS=0x...
-```
+La salida del deploy imprime las variables necesarias:
+- `CFP_MNEMONIC`: frase owner del contrato (solo API, nunca en MetaMask)
+- `CFP_FACTORY_ADDRESS`: dirección del contrato desplegado
+- `CFP_ADMIN_ADDRESS`: cuenta admin (primera cuenta de la frase MetaMask)
+- `CFP_METAMASK_MNEMONIC`: frase independiente para importar en MetaMask
 
 Copiar estos valores. Se usan en los pasos siguientes.
+
+> **Importante**: Las cuentas de MetaMask se fondean automáticamente con 1000 ETH cada una durante el deploy. Para fondeo manual existe `node scripts/fund.js "<frase_metamask>"`.
 
 ### Terminal 2 — Servidor de API
 
@@ -42,6 +42,7 @@ source venv/bin/activate
 export CFP_MNEMONIC="<valor del deploy>"
 export CFP_FACTORY_ADDRESS="<valor del deploy>"
 export CFP_ADMIN_ADDRESS="<valor del deploy>"
+export CFP_METAMASK_MNEMONIC="<valor del deploy>"
 python3 apiserver.py
 ```
 
@@ -64,7 +65,7 @@ Las peticiones a `/api/*` se redirigen automáticamente al backend Flask (config
 
 ### Administrador
 
-La cuenta `CFP_ADMIN_ADDRESS` (derivada de `CFP_MNEMONIC`, account 2). Solo visible si la wallet conectada coincide.
+La cuenta `CFP_ADMIN_ADDRESS` (primera cuenta derivada de la frase MetaMask, completamente independiente de `CFP_MNEMONIC`). No tiene privilegios sobre el contrato; solo firma EIP-712 para la API. Visible si la wallet conectada coincide.
 
 - Listar solicitudes de registro pendientes (`GET /admin/pending`)
 - Autorizar creadores (`POST /authorize/:address`)
@@ -79,7 +80,11 @@ Cualquier cuenta puede registrarse en dos pasos:
 1. **On-chain**: transacción MetaMask al `CFPFactory` (método `register()`)
 2. **Off-chain**: firma EIP-712 (`RegisterRequest`) enviada a `POST /register`
 
-Estados posibles: `none` → `pending` → `registered` → `authorized` \
+Estados posibles (consultados on-chain como fuente de verdad):
+- `pending`: ninguna interacción, o solo una de las dos (on-chain o API)
+- `registered`: ambas interacciones completadas, pendiente de autorización
+- `authorized`: autorizado por el administrador para crear llamados
+
 Creadores autorizados pueden crear llamados (Etapa 2).
 
 - Consultar estado (`GET /registrations/:address`)
@@ -99,9 +104,9 @@ Sin MetaMask. Consulta:
 ### On-chain (MetaMask)
 
 | Acción | Método del contrato |
-|---|---|
+|---|---|---|
 | Registro de creador | `CFPFactory.register()` |
-| Creación de llamado | `CFPFactory.createCall()` |
+| Creación de llamado | `CFPFactory.create()` |
 | Autorización/Desautorización | `CFPFactory.authorize()` / `CFPFactory.unauthorize()` |
 
 ### Off-chain (API + EIP-712)
@@ -145,10 +150,11 @@ source venv-test/bin/activate
 export CFP_MNEMONIC="..."
 export CFP_FACTORY_ADDRESS="..."
 export CFP_ADMIN_ADDRESS="..."
+export CFP_METAMASK_MNEMONIC="..."
 pytest test_apiserver.py -v
 ```
 
-71 tests con firmas EIP-712.
+72 tests con firmas EIP-712. Requiere dos venv separados: `venv/` para el servidor y `venv-test/` para los tests.
 
 ### Interfaz web (vitest)
 
@@ -165,7 +171,8 @@ Pruebas de componentes con jsdom.
 
 La API usa SQLite (`cfp.db`) con las siguientes tablas:
 
-- **creators** — `address`, `name`, `status`, `nonce`, `created_at`, `updated_at`
-- **admin_nonce** — `nonce` (contador de operaciones del admin)
-- **calls** — `call_id`, `creator_address`, `title`, `description`, `metadata`, `created_at`, `closed` (Etapa 2)
+- **registrations** — `address` (PK), `name`, `nonce`. Solo metadatos off-chain; el estado se consulta on-chain.
+- **admin_state** — `id` (PK), `nonce`. Contador de operaciones del administrador para anti-replay.
+- **calls** — `call_id` (PK), `title`, `description`, `creator`, `cfp_address`, `status` (`pending`/`created`). El event listener actualiza `creator` y `cfp_address` al detectar `CFPCreated` on-chain.
+- **proposals** — `proof_json`, `title`, `description`, `call_id`, `proposal_id` (PK). Pruebas de Merkle para verificación off-chain (Etapa 3).
 
