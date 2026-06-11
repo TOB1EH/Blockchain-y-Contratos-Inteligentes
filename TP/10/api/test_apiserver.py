@@ -191,6 +191,12 @@ FACTORY_MINIMAL_ABI = [
 SERVER = "http://127.0.0.1:5000"
 APPLICATION_JSON = "application/json"
 WEB3_URI = os.environ.get("CFP_WEB3_URI", "http://127.0.0.1:8545")
+
+# Frase default de Hardhat (tiene ETH en el nodo local)
+HARDHAT_MNEMONIC = "test test test test test test test test test test test junk"
+# Frase MetaMask opcional; si no se provee usa la de Hardhat (para tests en dev)
+METAMASK_MNEMONIC = os.environ.get("CFP_METAMASK_MNEMONIC", HARDHAT_MNEMONIC)
+
 accounts = []
 calls = {}
 _run_id = os.urandom(4).hex()  # único por ejecución, evita conflictos entre runs
@@ -230,25 +236,23 @@ def get_factory_contract():
 
 
 def get_funder_account():
-    """Retorna la cuenta fondeadora (índice 1 del mnemonico, separada del owner)."""
+    """Retorna la cuenta fondeadora (cuenta 0 de Hardhat, no de CFP_MNEMONIC)."""
     global _funder_account
     if _funder_account is None:
         w3 = get_w3()
-        mnemonic = os.environ.get("CFP_MNEMONIC", "")
         _funder_account = w3.eth.account.from_mnemonic(
-            mnemonic, account_path="m/44'/60'/0'/0/1"
+            HARDHAT_MNEMONIC, account_path="m/44'/60'/0'/0/0"
         )
     return _funder_account
 
 
 def get_admin_account():
-    """Retorna la cuenta del api_manager (índice 2 del mnemonico)."""
+    """Retorna la cuenta administradora (índice 0 de la frase MetaMask)."""
     global _admin_account
     if _admin_account is None:
         w3 = get_w3()
-        mnemonic = os.environ.get("CFP_MNEMONIC", "")
         _admin_account = w3.eth.account.from_mnemonic(
-            mnemonic, account_path="m/44'/60'/0'/0/2"
+            METAMASK_MNEMONIC, account_path="m/44'/60'/0'/0/0"
         )
     return _admin_account
 
@@ -849,7 +853,7 @@ def test_register_transition() -> None:
     # Llamar contract.register() on-chain
     fund_account(account.address)
     send_register_tx(account)
-    # Esperar a que el listener actualice el estado
+    # El estado se computa consultando la cadena en tiempo real
     assert wait_for_registration_status(
         account.address, "registered"
     ), "El estado no se actualizó a 'registered' en el tiempo esperado"
@@ -1008,6 +1012,31 @@ def test_admin_nonce() -> None:
     assert isinstance(nonce, int) and nonce >= 1
 
 
+def test_admin_pending() -> None:
+    """Prueba que GET /admin/pending devuelva direcciones registradas on-chain pero no autorizadas."""
+    contract_address = get_contract_address()
+    # Registrar una cuenta on-chain sin autorizar
+    account = Account().create()
+    fund_account(account.address)
+    send_register_tx(account)
+    # No llamar POST /register (solo on-chain)
+    response = requests.get(url("admin/pending"), timeout=3)
+    assert response.status_code == 200
+    data = response.json()
+    assert "pending" in data
+    assert isinstance(data["pending"], list)
+    # La cuenta debe aparecer en la lista de pendientes
+    pending_addrs = [p["address"].lower() for p in data["pending"]]
+    assert account.address.lower() in pending_addrs, \
+        "La cuenta registrada on-chain debería estar en getAllPending()"
+    # Si la cuenta no está en la API, su name debe ser None
+    for p in data["pending"]:
+        if p["address"].lower() == account.address.lower():
+            assert p["name"] is None, \
+                "Cuenta solo on-chain debe tener name=None en /admin/pending"
+            break
+
+
 def test_api_authorize() -> None:
     """Prueba que el api_manager pueda autorizar una dirección vía API."""
     contract_address = get_contract_address()
@@ -1065,12 +1094,12 @@ def test_api_unauthorize() -> None:
     assert response.status_code == 200
     validate(instance=response.json(), schema=message_schema)
     assert response.json()["message"] == messages.OK
-    # Sin llamados creados → la cuenta se elimina de la BD; GET devuelve solo status
+    # Sin llamados creados → la cuenta se preserva en DB (anti-replay); GET devuelve datos preservados
     reg = get_registration(account.address)
     assert reg.status_code == 200
     assert reg.json()["status"] == "pending"
-    assert "name" not in reg.json()
-    assert "nonce" not in reg.json()
+    assert reg.json()["name"] == "API Unauth User"
+    assert reg.json()["nonce"] == 1
     # El nonce debe haber incrementado
     assert get_admin_nonce() == nonce + 1
 
@@ -2333,8 +2362,8 @@ def test_api_unauthorize_not_registered() -> None:
     assert get_admin_nonce() == nonce
 
 
-def test_api_unauthorize_archived() -> None:
-    """Prueba el ciclo completo: archived al desautorizar con llamados; 404 al reintentar."""
+def test_api_unauthorize_preserves_db() -> None:
+    """Prueba que tras desautorizar los datos en DB se preservan y el estado vuelve a pending."""
     contract_address = get_contract_address()
     admin = get_admin_account()
 
@@ -2342,8 +2371,8 @@ def test_api_unauthorize_archived() -> None:
     account = Account().create()
     fund_account(account.address)
     send_register_tx(account)
-    msg = make_register_message(contract_address, "Archived Creator")
-    post_register(account.address, sign_bytes(msg, account), "Archived Creator")
+    msg = make_register_message(contract_address, "DB Preserved Creator")
+    post_register(account.address, sign_bytes(msg, account), "DB Preserved Creator")
     assert wait_for_registration_status(
         account.address, "registered"
     ), "El estado no llegó a 'registered'"
@@ -2354,7 +2383,7 @@ def test_api_unauthorize_archived() -> None:
         account.address, "authorized"
     ), "El estado no llegó a 'authorized'"
 
-    # Crear un llamado on-chain para que createdByCount() > 0
+    # Crear un llamado on-chain
     send_create_tx(account, random_hash(), get_closing_time())
 
     # Desautorizar
@@ -2365,17 +2394,14 @@ def test_api_unauthorize_archived() -> None:
     assert response.json()["message"] == messages.OK
     assert get_admin_nonce() == nonce + 1
 
-    # Con llamados → estado archived, datos preservados
-    assert wait_for_registration_status(
-        account.address, "archived"
-    ), "El estado no llegó a 'archived'"
+    # DB preservada, estado computado = pending
     reg = get_registration(account.address)
     assert reg.status_code == 200
-    assert reg.json()["status"] == "archived"
-    assert reg.json()["name"] == "Archived Creator"
+    assert reg.json()["status"] == "pending"
+    assert reg.json()["name"] == "DB Preserved Creator"
     assert "nonce" in reg.json()
 
-    # Intentar desautorizar de nuevo → 404, nonce no cambia
+    # Intentar desautorizar de nuevo → 404 (no está registrado on-chain)
     nonce2 = get_admin_nonce()
     unauth_msg2 = make_unauthorize_message(contract_address, nonce2, account.address)
     response2 = post_unauthorize(account.address, sign_bytes(unauth_msg2, admin))
@@ -2384,52 +2410,36 @@ def test_api_unauthorize_archived() -> None:
     assert get_admin_nonce() == nonce2
 
 
-def test_api_authorize_archived() -> None:
-    """Prueba que /authorize falle con 404 si la dirección está archivada."""
+def test_api_authorize_not_registered_onchain() -> None:
+    """Prueba que /authorize falle con 404 si la dirección no está registrada on-chain."""
     contract_address = get_contract_address()
     admin = get_admin_account()
 
-    # Registrar, autorizar, crear llamado, desautorizar → archived
+    # Solo en DB (POST /register), sin registro on-chain
     account = Account().create()
     fund_account(account.address)
-    send_register_tx(account)
-    msg = make_register_message(contract_address, "To Archive")
-    post_register(account.address, sign_bytes(msg, account), "To Archive")
-    assert wait_for_registration_status(account.address, "registered"), \
-        "El estado no llegó a 'registered'"
-    auth_nonce = get_admin_nonce()
-    assert post_authorize(
-        account.address,
-        sign_bytes(make_authorize_message(contract_address, auth_nonce, account.address), admin)
-    ).status_code == 200
-    assert wait_for_registration_status(account.address, "authorized"), \
-        "El estado no llegó a 'authorized'"
-    send_create_tx(account, random_hash(), get_closing_time())
-    nonce = get_admin_nonce()
-    assert post_unauthorize(
-        account.address,
-        sign_bytes(make_unauthorize_message(contract_address, nonce, account.address), admin)
-    ).status_code == 200
-    assert wait_for_registration_status(account.address, "archived"), \
-        "El estado no llegó a 'archived'"
+    msg = make_register_message(contract_address, "DB only")
+    response = post_register(account.address, sign_bytes(msg, account), "DB only")
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
 
-    # Intentar autorizar una cuenta archivada → 404, nonce no cambia
-    nonce2 = get_admin_nonce()
+    # Intentar autorizar una cuenta sin registro on-chain → 404
+    nonce = get_admin_nonce()
     response = post_authorize(
         account.address,
-        sign_bytes(make_authorize_message(contract_address, nonce2, account.address), admin)
+        sign_bytes(make_authorize_message(contract_address, nonce, account.address), admin)
     )
     assert response.status_code == 404
     assert response.json()["message"] == messages.NOT_REGISTERED
-    assert get_admin_nonce() == nonce2
+    assert get_admin_nonce() == nonce
 
 
-def test_archived_reregister() -> None:
-    """Prueba que una cuenta archivada puede volver a registrarse."""
+def test_reregister_onchain_after_unauthorize() -> None:
+    """Prueba que tras desautorizar, re-registrarse on-chain restaura el estado 'registered'."""
     contract_address = get_contract_address()
     admin = get_admin_account()
 
-    # Llevar la cuenta a estado archived
+    # Llevar la cuenta a pending (registrar, autorizar, crear llamado, desautorizar)
     account = Account().create()
     fund_account(account.address)
     send_register_tx(account)
@@ -2450,21 +2460,26 @@ def test_archived_reregister() -> None:
         account.address,
         sign_bytes(make_unauthorize_message(contract_address, nonce, account.address), admin)
     ).status_code == 200
-    assert wait_for_registration_status(account.address, "archived"), \
-        "El estado no llegó a 'archived'"
+    # DB preservada, estado = pending
+    assert wait_for_registration_status(account.address, "pending"), \
+        "El estado no llegó a 'pending' tras desautorizar"
 
-    # La cuenta vuelve a registrarse en el contrato
+    # Re-registrarse on-chain (sin POST /register, los datos en DB se preservan)
     send_register_tx(account)
 
-    # POST /register debe aceptar la cuenta archivada (la sobreescribe)
-    new_msg = make_register_message(contract_address, "Re-registered Name")
-    response = post_register(account.address, sign_bytes(new_msg, account), "Re-registered Name")
-    assert response.status_code == 200
-    assert response.json()["status"] in ("pending", "registered")
+    # Estado computado = registered (isRegistered=true + DB existe)
+    assert wait_for_registration_status(account.address, "registered"), \
+        "El estado no llegó a 'registered' tras re-registro on-chain"
 
-    # El registro debe tener el nuevo nombre y nonce = 1
+    # Nombre y nonce originales preservados
     reg = get_registration(account.address)
     assert reg.status_code == 200
-    assert reg.json()["name"] == "Re-registered Name"
-    assert reg.json()["nonce"] == 1
-    assert reg.json()["status"] != "archived"
+    assert reg.json()["name"] == "Re-register Me"
+    assert reg.json()["nonce"] >= 1
+    assert reg.json()["status"] == "registered"
+
+    # POST /register debe rechazar (ya existe en DB)
+    new_msg = make_register_message(contract_address, "Should Fail")
+    response = post_register(account.address, sign_bytes(new_msg, account), "Should Fail")
+    assert response.status_code == 403
+    assert response.json()["message"] == messages.ALREADY_IN_SYSTEM

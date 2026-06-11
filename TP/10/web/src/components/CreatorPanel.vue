@@ -8,7 +8,6 @@ import { buildRegisterMessage, buildUpdateMessage } from '../utils/eip712.js'
 // Declarar estado reactivo del panel de creador
 const api = useApi()
 const { account, signer, chainId, isConnected } = useWallet()
-
 const status = ref(null)
 const dbEntry = ref(null)
 const contractAddress = ref('')
@@ -16,19 +15,36 @@ const name = ref('')
 const newName = ref('')
 const msg = ref('')
 const loadingStatus = ref(false)
+const isRegisteredOnChain = ref(false) // Nuevo estado para saber si ya completó el Paso 1
 
-// Definir ABI minima del factory para registro on-chain
-const FACTORY_ABI = ['function register()']
+// Definir ABI minima del factory para registro on-chain (agregamos isRegistered)
+const FACTORY_ABI = [
+  'function register()',
+  'function isRegistered(address) view returns (bool)'
+]
 
 // Verificar estado del creador al conectar cuenta
 watch(account, async () => {
   msg.value = ''
-  if (!account.value) { status.value = null; dbEntry.value = null; return }
+  if (!account.value) { 
+    status.value = null; dbEntry.value = null; isRegisteredOnChain.value = false; 
+    return 
+  }
   loadingStatus.value = true
   const addrRes = await api.getContractAddress()
   contractAddress.value = addrRes.data.address
+  
+  // Consultar al contrato si ya está registrado on-chain para ocultar el Paso 1
+  if (signer.value && contractAddress.value) {
+    try {
+      const contract = new Contract(contractAddress.value, FACTORY_ABI, signer.value)
+      isRegisteredOnChain.value = await contract.isRegistered(account.value)
+    } catch (e) {
+      console.error("Error al consultar on-chain:", e)
+    }
+  }
   const regRes = await api.getRegistration(account.value)
-
+  
   // Detectar si es admin
   const adminRes = await api.getAdminAddress()
   if (account.value.toLowerCase() === adminRes.data.address.toLowerCase()) {
@@ -36,17 +52,13 @@ watch(account, async () => {
     loadingStatus.value = false
     return
   }
-
+  
+  // Usar el estado real de la API sin inventar el estado "none"
   if (regRes.status === 200) {
-    dbEntry.value = regRes.data
-    // Si la API no devuelve 'name', significa que no estás en la base de datos
-    if (!regRes.data.name) {
-      status.value = 'none'
-    } else {
-      status.value = regRes.data.status
-    }
+    dbEntry.value = regRes.data.name ? regRes.data : null
+    status.value = regRes.data.status
   } else {
-    status.value = 'none'
+    status.value = 'pending'
     dbEntry.value = null
   }
   loadingStatus.value = false
@@ -61,13 +73,14 @@ async function registerOnChain() {
     const tx = await contract.register()
     msg.value = `Transaccion enviada: ${tx.hash}. Esperando confirmacion...`
     await tx.wait()
-    msg.value = 'Registro on-chain exitoso. Ahora registrate off-chain.'
+    msg.value = 'Registro on-chain exitoso.'
+    
+    isRegisteredOnChain.value = true // Ocultar boton paso 1
+    
+    // Refrescar estado desde la API
     const regRes = await api.getRegistration(account.value)
-    // Si no hay 'name', seguimos forzando el estado 'none' para mostrar el formulario del Paso 2
-    if (regRes.data && !regRes.data.name) {
-      status.value = 'none'
-    } else {
-      status.value = regRes.data?.status || 'none'
+    if (regRes.status === 200) {
+      status.value = regRes.data.status
     }
   } catch (e) {
     msg.value = `Error: ${e.message}`
@@ -84,7 +97,7 @@ async function registerOffChain() {
     )
     const res = await api.postRegister(account.value, signature, name.value)
     if (res.status === 200) {
-      msg.value = `Registro off-chain exitoso. Estado: ${res.data.status}`
+      msg.value = `Registro off-chain exitoso.`
       dbEntry.value = { name: name.value, status: res.data.status, nonce: 1 }
       status.value = res.data.status
     } else {
@@ -116,7 +129,6 @@ async function updateProfile() {
   }
 }
 </script>
-
 <template>
   <div>
     <h2>Panel de Creador</h2>
@@ -127,23 +139,36 @@ async function updateProfile() {
     </div>
     <div v-else>
       <p><strong>Direccion:</strong> {{ account }}</p>
-      <p><strong>Estado:</strong> {{ status || 'desconocido' }}</p>
-      <div v-if="status === 'none'">
+      <p><strong>Estado:</strong> {{ status || 'pending' }}</p>
+      
+      <!-- Mostrar sección de registro si está en estado pending -->
+      <div v-if="status === 'pending'">
         <h3>Registro</h3>
-        <p>Paso 1: Registrate on-chain (requiere firma MetaMask)</p>
-        <button @click="registerOnChain">Registrarse on-chain</button>
-        <hr>
-        <p>Paso 2: Registrate off-chain en la API</p>
-        <input v-model="name" placeholder="Nombre" />
-        <button @click="registerOffChain">Registrarse off-chain</button>
+        
+        <!-- Ocultar si ya está registrado en el contrato -->
+        <div v-if="!isRegisteredOnChain">
+          <p>Paso 1: Registrate on-chain (requiere firma MetaMask)</p>
+          <button @click="registerOnChain">Registrarse on-chain</button>
+          <hr>
+        </div>
+        
+        <!-- Ocultar si ya está registrado en la base de datos de la API -->
+        <div v-if="!dbEntry">
+          <p>Paso 2: Registrate off-chain en la API</p>
+          <input v-model="name" placeholder="Nombre" />
+          <button @click="registerOffChain">Registrarse off-chain</button>
+        </div>
       </div>
-      <div v-else>
+      
+      <!-- Mostrar sección de actualizar perfil solo cuando completó ambos pasos -->
+      <div v-else-if="status === 'registered' || status === 'authorized'">
         <h3>Actualizar Perfil</h3>
         <p>Nombre actual: {{ dbEntry?.name }}</p>
         <input v-model="newName" placeholder="Nuevo nombre" />
         <button @click="updateProfile">Actualizar</button>
       </div>
-      <p v-if="msg">{{ msg }}</p>
+      
+      <p v-if="msg"><strong>{{ msg }}</strong></p>
     </div>
   </div>
 </template>

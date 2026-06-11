@@ -43,8 +43,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS registrations (
                 address     TEXT PRIMARY KEY,
                 name        TEXT NOT NULL,
-                nonce       INTEGER NOT NULL DEFAULT 1,
-                status      TEXT NOT NULL
+                nonce       INTEGER NOT NULL DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS calls (
@@ -86,49 +85,29 @@ def get_registration(address: str) -> dict | None:
 
 
 def get_all_registrations() -> list:
-    """Devuelve todos los registros no archivados."""
+    """Devuelve todos los registros."""
     conn = get_connection()
     rows = conn.execute(
-        "SELECT address, name, status, nonce FROM registrations WHERE status != 'archived' ORDER BY address"
+        "SELECT address, name, nonce FROM registrations ORDER BY address"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
-def get_pending_registrations() -> list:
-    """Devuelve los registros pendientes de autorizacion."""
-    conn = get_connection()
-    rows = conn.execute(
-        "SELECT address, name, status, nonce FROM registrations WHERE status = 'registered' ORDER BY address"
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-def upsert_registration(address: str, name: str, status: str) -> None:
+def upsert_registration(address: str, name: str) -> None:
     """
     Inserta o reemplaza un registro.
-    El nonce siempre empieza en 1 en una inserción nueva.
-    En un re-registro (cuenta archived), reemplaza el registro completo.
+    En un re-registro, reemplaza el registro completo reseteando el nonce a 1.
     """
     with transaction() as conn:
         conn.execute(
             """
-            INSERT INTO registrations (address, name, nonce, status)
-            VALUES (?, ?, 1, ?)
+            INSERT INTO registrations (address, name, nonce)
+            VALUES (?, ?, 1)
             ON CONFLICT(address) DO UPDATE SET
-                name   = excluded.name,
-                nonce  = 1,
-                status = excluded.status
+                name  = excluded.name,
+                nonce = 1
             """,
-            (address.lower(), name, status)
-        )
-
-
-def update_registration_status(address: str, status: str) -> None:
-    """Actualiza solo el estado de un registro existente."""
-    with transaction() as conn:
-        conn.execute(
-            "UPDATE registrations SET status = ? WHERE address = ?",
-            (status, address.lower())
+            (address.lower(), name)
         )
 
 
@@ -142,7 +121,7 @@ def update_registration_name(address: str, name: str) -> None:
 
 
 def delete_registration(address: str) -> None:
-    """Elimina el registro de una dirección (cuando se desautoriza sin llamados)."""
+    """Elimina el registro de una dirección."""
     with transaction() as conn:
         conn.execute(
             "DELETE FROM registrations WHERE address = ?",

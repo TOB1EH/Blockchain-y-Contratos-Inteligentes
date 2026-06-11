@@ -7,7 +7,7 @@ El proyecto debe incluir tres componentes principales:
 * API REST, que satisfaga las especificaciones del práctico 9, y situada en el directorio `api`.
 Deben proveerse las instrucciones necesarias para desplegar y ejecutar el servidor que provee la API. El directorio `api` debe incluir un `README.md` que describa la estructura final de endpoints, explique las decisiones tomadas y enumere los casos de prueba agregados para verificar las nuevas funcionalidades.
 
-* Interface web, en el directorio `web`. Deben proveerse las instrucciones para desplegar y ejecutar el servidor que provee esta interface. El directorio `web` debe incluir un `README.md` que describa el stack utilizado, la forma de lanzar el servidor y la forma de utilizar la aplicación.
+* Interface web, en el directorio `web`. Deben proveerse las instrucciones para desplegar y ejecutar el servidor que provee esta interface. El directorio `web` debe incluir un `README.md` que describa el *stack* utilizado, la forma de lanzar el servidor y la forma de utilizar la aplicación.
 
 Puede usarse una estructura de directorios diferente si las herramientas utilizadas así lo requieren. En este caso se deberá indicar claramente en qué directorio se encuentra cada uno de los tres componentes.
 
@@ -42,6 +42,10 @@ La API podrá extender la estructura de endpoints del práctico 9 para soportar 
 * consultar la información pública derivada de esa entrega final.
 
 Además, cambiaremos el esquema de firma. En el práctico 9 utilizamos la firma EIP-191, en este utilizaremos la firma EIP-712. Esto implica cambiar la implementación de todos los endpoints que reciben y procesan una firma, y cambiar los casos de prueba conforme a la nueva implementación.
+
+#### Principio de fuente de verdad *on-chain*
+
+Toda consulta que haga referencia a información cuya fuente de verdad es el contrato (estado de autorización de un creador, existencia o estado de un llamado, etc.) debe resolverse **consultando directamente a la cadena** en el momento de la solicitud. La API no debe cachear ni responder con datos almacenados localmente cuando la información canónica proviene del contrato.
 
 #### Dominio EIP-712
 
@@ -96,16 +100,30 @@ Toda ampliación deberá quedar documentada en el `README.md` del directorio `ap
 
 ### Despliegue
 
-El mecanismo de despliegue de contratos debe incluir, en el mismo script o en otro script correctamente documentado, la generación de una frase mnemónica distinta de la utilizada por Hardhat por defecto.
+#### Cuenta owner del contrato (`CFP_MNEMONIC`)
+
+El mecanismo de despliegue de contratos debe incluir, en el mismo script o en otro script correctamente documentado, la generación de una frase mnemónica distinta de la utilizada por Hardhat por defecto. La primera cuenta derivada de esa frase mnemónica es la cuenta que despliega el contrato `CFPFactory` y, por lo tanto, su dueña (*owner*). Es la única cuenta con privilegios de *owner* sobre ese contrato y la única que puede ejecutar las operaciones que lo requieran (por ejemplo, autorizar o desautorizar creadores directamente desde el contrato).
+
+La API utiliza internamente esa misma cuenta para todas las transacciones *on-chain* que requieren privilegios de *owner*. **Nadie externo a los scripts de despliegue y a la API tiene acceso a esta frase mnemónica**; no es una cuenta de usuario ni debe aparecer en Metamask. La frase se provee a la API mediante la variable de entorno `CFP_MNEMONIC`.
+
+#### Cuenta administradora (`CFP_ADMIN_ADDRESS`)
+
+La cuenta administradora es una cuenta completamente distinta de la anterior. No se deriva de `CFP_MNEMONIC` ni está relacionada con ella. Es una cuenta ordinaria de Metamask, controlada por un usuario humano, que opera desde la interfaz web firmando mensajes EIP-712 con su *wallet*. **La cuenta administradora no tiene ningún privilegio directo sobre el contrato**: no es el *owner* ni puede ejecutar funciones restringidas. Su privilegio es exclusivamente a nivel de la API: ésta reconoce su dirección y acepta sus órdenes administrativas (autorizar/desautorizar creadores) siempre que vengan acompañadas de una firma EIP-712 válida.
+
+La dirección de la cuenta administradora se provee a la API mediante la variable de entorno `CFP_ADMIN_ADDRESS`. **La cuenta administradora no puede registrarse como creador ni operar como tal.**
+
+#### Financiamiento de cuentas de Metamask
+
+Las firmas EIP-712 utilizadas para interactuar con la API no consumen gas, pero las transacciones *on-chain* (registro, creación de llamados, etc.) sí lo hacen. Por ello debe existir un script, correctamente documentado, que reciba como argumento la frase mnemónica de Metamask y transfiera 1000 `ether` a cada una de las primeras 10 cuentas generadas por esa frase. Este script se ejecuta una vez durante la preparación del entorno de desarrollo, antes de que los usuarios comiencen a operar con Metamask.
+
+#### Variables de entorno requeridas
 
 El proceso de despliegue y preparación de cuentas debe emitir en forma explícita la información necesaria para configurar el entorno de ejecución. Como mínimo debe informar:
 
 * `CFP_FACTORY_ADDRESS`
 * `CFP_MNEMONIC`
 
-La salida del script debe ser suficiente para que un usuario pueda:
-
-* lanzar la API con las variables de ambiente correctas para despliegue y owner on-chain.
+La salida del script debe ser suficiente para que un usuario pueda lanzar la API con las variables de entorno correctas.
 
 El servidor de API requiere además la variable `CFP_ADMIN_ADDRESS` al momento de ejecución.
 La responsabilidad de proveer `CFP_FACTORY_ADDRESS`, `CFP_MNEMONIC` y `CFP_ADMIN_ADDRESS` recae en quien invoca el servidor.
@@ -116,21 +134,21 @@ Esas mismas variables deben ser provistas también al ejecutar los casos de prue
 La interfaz web de `TP/10/web` debe funcionar como cliente de la API y de los contratos, integrando:
 
 * Contratos desplegados (factoría y llamados), con firma de transacciones mediante Metamask cuando corresponda.
-* API REST, extendida según sea necesario para soportar los nuevos flujos, la persistencia off-chain y la verificación de pruebas.
+* API REST, extendida según sea necesario para soportar los nuevos flujos, la persistencia *off-chain* y la verificación de pruebas.
 
 La aplicación debe separar claramente operaciones:
 
-* **On-chain con Metamask**: acciones que requieren identidad del usuario y firma/transacción desde su *wallet*.
-* **Off-chain vía API**: acciones de consulta, persistencia de metadatos, generación y validación de pruebas/recibos, y carga/descarga de archivos.
+* ***On-chain* con Metamask**: acciones que requieren identidad del usuario y firma/transacción desde su *wallet*.
+* ***Off-chain* vía API**: acciones de consulta, persistencia de metadatos, generación y validación de pruebas/recibos, y carga/descarga de archivos.
 
-Metamask debe utilizar una frase mnemónica distinta que Hardhat, y debe preverse un mecanismo para que las cuentas generadas por esa frase tengan `ether` suficiente para operar.
+Metamask debe utilizar una frase mnemónica distinta que Hardhat. Dado que las firmas EIP-712 no consumen gas pero las transacciones *on-chain* sí, debe proveerse un script que reciba la frase mnemónica de Metamask y transfiera 1000 `ether` a cada una de las primeras 10 cuentas generadas por esa frase, de modo que todas ellas puedan operar en la red de desarrollo. Este script debe ejecutarse como parte del proceso de preparación del entorno antes de usar la interfaz web.
 
 ### Comportamiento según el rol activo
 
 La interfaz debe adaptarse al contexto del usuario conectado o no conectado. En particular:
 
 * Si el usuario no tiene Metamask instalado, no conectó ninguna cuenta, o no autorizó el acceso, el sitio debe seguir siendo plenamente funcional para todas las operaciones públicas y anónimas.
-* En ese caso, la interfaz debe mostrar únicamente las acciones que pueden realizarse sin wallet: exploración pública, consulta de llamados y verificación de recibos.
+* En ese caso, la interfaz debe mostrar únicamente las acciones que pueden realizarse sin *wallet*: exploración pública, consulta de llamados y verificación de recibos.
 * Si el usuario se conecta como administrador, la interfaz debe mostrar todas las acciones disponibles para administración, además de todas las acciones públicas.
 * Si el usuario se conecta como creador, la interfaz debe mostrar todas las acciones públicas y las acciones propias del rol creador, incluyendo registro, consulta de estado, actualización de perfil y creación de llamados cuando corresponda.
 * Si el usuario posee una cuenta pero no pertenece a un rol habilitado para alguna operación, la interfaz no debe ocultar las funciones públicas ni impedir su navegación; únicamente debe deshabilitar o explicar las acciones restringidas.
@@ -143,7 +161,7 @@ La interfaz debe admitir los siguientes roles funcionales.
 
 ### 1. Administrador
 
-Corresponde a la cuenta administradora definida por la API y utilizada para firmar las operaciones administrativas expuestas por el sistema. Esta cuenta puede ser distinta del owner on-chain que efectivamente envía ciertas transacciones al contrato.
+Corresponde a la cuenta administradora definida por la API mediante `CFP_ADMIN_ADDRESS`. Es una cuenta de Metamask controlada por un usuario humano, completamente distinta del *owner on-chain* (`CFP_MNEMONIC`). Opera desde la interfaz web firmando mensajes EIP-712 con su *wallet*; no tiene privilegios directos sobre el contrato y no puede enviar transacciones en nombre del *owner*.
 
 Debe poder:
 
@@ -155,12 +173,11 @@ Requisitos de interacción:
 
 * La UI debe mostrar el `nonce` actual del administrador (obtenido desde API) o manejarlo internamente para firma correcta.
 * Las operaciones de autorizar/desautorizar deben requerir confirmación explícita del usuario administrador.
-* El resultado debe reflejar estado final consistente con cadena y API.
+* El resultado de cada operación debe reflejarse correctamente tanto en el estado que devuelve la API como en el estado del contrato.
 
 Restricciones del rol administrador:
 
-* La cuenta administradora no puede registrarse como creador ni como oferente para presentar propuestas.
-* La cuenta administradora no puede presentar propuestas en ningún llamado.
+* La cuenta administradora no puede registrarse como creador ni presentar propuestas en ningún llamado.
 
 ### 2. Creador de propuestas
 
@@ -171,22 +188,33 @@ Debe poder:
 * Registrarse como creador con Metamask.
 * Consultar estado de registración (`pending`, `registered`, `authorized`).
 * Si está autorizado, crear llamados.
-* En cualquier estado (registrado o autorizado), actualizar su información de perfil en base de datos:
+* En cualquier estado (registrado o autorizado), actualizar su información de perfil a través de la API (operación que requiere firma EIP-712):
   * nombre
   * descripción
 
+#### Doble interacción: cadena y API
+
+Las operaciones de los creadores requieren interacción con dos sistemas independientes:
+
+1. ***On-chain***: el creador ejecuta funciones del contrato (`register()`, `create()`, etc.) desde Metamask. Estas transacciones consumen gas y quedan registradas en la cadena.
+2. ***Off-chain***: el creador también debe interactuar con la API para persistir los datos que no se almacenan en el contrato (por ejemplo, su nombre, descripción u otros metadatos).
+
+Ambas interacciones son necesarias para que la operación se considere completa. La API **escucha los eventos emitidos por el contrato** para saber que la operación *on-chain* fue efectivamente ejecutada, y solo entonces actualiza el estado correspondiente en la base de datos *off-chain*. El orden en que el usuario realiza las dos interacciones puede variar, por lo que deben manejarse adecuadamente los estados intermedios que resulten de las distintas combinaciones posibles.
+
+Toda consulta de información que tenga origen *on-chain* (estado de autorización, existencia de un llamado, etc.) debe realizarse consultando directamente a la cadena. La API no debe responder con datos almacenados localmente cuando la fuente de verdad es el contrato.
+
 #### Estados de registración
 
-| Acciones previas                               | En contrato | En API | Estado       |
-|------------------------------------------------|-------------|--------|--------------|
-| Ninguna                                        | no          | no     | `pending`    |
-| Registrado en el contrato solamente            | sí          | no     | `pending`    |
-| Registrado en la API solamente                 | no          | sí     | `pending`    |
-| Registrado en ambos, pendiente de autorización | sí          | sí     | `registered` |
-| Autorizado por el administrador                | sí          | sí     | `authorized` |
-| Desautorizado por el administrador             | no          | sí     | `pending`    |
+| Acciones previas                               | En contrato | En API | Estado       | Observación                                                                                                      |
+|------------------------------------------------|-------------|--------|--------------|------------------------------------------------------------------------------------------------------------------|
+| Ninguna                                        | no          | no     | `pending`    | Estado inicial.                                                                                                  |
+| Registrado en el contrato solamente            | sí          | no     | `pending`    | Interacción *on-chain* completada; la API aún no recibió los datos.                       |
+| Registrado en la API solamente                 | no          | sí     | `pending`    | Interacción con la API completada; la transacción *on-chain* aún no fue minada, fracasó, o aún no fue detectada. |
+| Registrado en ambos, pendiente de autorización | sí          | sí     | `registered` | El creador completó ambas interacciones y espera que el administrador lo autorice.                               |
+| Autorizado por el administrador                | sí          | sí     | `authorized` | El administrador ejecutó la autorización *on-chain*; el creador puede crear llamados.                            |
+| Desautorizado por el administrador             | no          | sí     | `pending`    | El administrador ejecutó la desautorización *on-chain*. Los datos en la API se preservan para evitar *replay*.   |
 
-Tras una desautorización la cuenta vuelve a `pending`: se elimina del contrato pero sus datos en la API se preservan. El creador puede volver a registrarse en el contrato para solicitar una nueva autorización.
+Tras una desautorización la cuenta vuelve a `pending`: se elimina del contrato pero sus datos en la API se preservan (en particular el `nonce`), lo que impide ataques de *replay* con firmas anteriores. El creador puede volver a registrarse en el contrato para solicitar una nueva autorización.
 
 #### Notas
 
@@ -217,8 +245,8 @@ Como respuesta, el sistema debe devolver un **recibo verificable** que incluya c
 * `proposalId` (raíz/identificador criptográfico)
 * pruebas necesarias para verificar pertenencia (por ejemplo pruebas de Merkle)
 * hash(es) de archivos y de campos relevantes
-* referencia de transacción/evento on-chain asociado
-* timestamp
+* referencia de transacción/evento *on-chain* asociado
+* *timestamp*
 
 Privacidad:
 
@@ -241,7 +269,7 @@ Una vez cerrado un llamado:
   * todos los archivos comprometidos
 * El servidor verifica integridad contra las pruebas del recibo.
 * Si todo coincide, el servidor registra en cadena la **recepción de archivos**.
-* El servidor devuelve un **recibo de recepción** con evidencia on-chain de la recepción.
+* El servidor devuelve un **recibo de recepción** con evidencia *on-chain* de la recepción.
 
 Persistencia y consulta:
 
@@ -271,7 +299,7 @@ La interfaz debe incluir, como mínimo, los siguientes módulos/pantallas:
   * generación y descarga de recibo
 * Verificación de propuesta:
   * carga de recibo
-  * validación criptográfica y on-chain
+  * validación criptográfica y *on-chain*
 * Entrega post-cierre:
   * carga de recibo + archivos completos
   * emisión y descarga de recibo de recepción
@@ -286,7 +314,7 @@ La solución debe documentar explícitamente en el `README.md` de `web`:
 * Qué métodos/eventos de contrato utiliza cada flujo.
 * Manejo de errores esperables (firma inválida, nonce inválido, no autorizado, llamado inexistente, etc.).
 
-Además, la UI debe contemplar estados transitorios típicos de blockchain:
+Además, la UI debe contemplar estados transitorios típicos de *blockchain*:
 
 * transacción pendiente
 * transacción confirmada
@@ -298,10 +326,10 @@ El formato exacto del recibo puede definirse libremente (por ejemplo JSON firmad
 
 * Ser portable (descargable y reutilizable luego).
 * Permitir verificación independiente del lado cliente.
-* Incluir referencias suficientes para reconsultar evidencia en cadena (tx hash, bloque, evento, contrato).
+* Incluir referencias suficientes para reconsultar evidencia en cadena (*tx hash*, bloque, evento, contrato).
 * Versionado de formato para compatibilidad futura.
 
-## Eventos on-chain obligatorios
+## Eventos *on-chain* obligatorios
 
 Todos los hechos significativos registrados en cadena deben emitir eventos adecuados, al menos para:
 
@@ -314,16 +342,16 @@ Todos los hechos significativos registrados en cadena deben emitir eventos adecu
 
 Cada evento debe incluir los identificadores necesarios para trazabilidad entre:
 
-* entidad on-chain (direcciones, ids, hashes)
-* entidad off-chain (registros de API y recibos)
+* entidad *on-chain* (direcciones, ids, hashes)
+* entidad *off-chain* (registros de API y recibos)
 
-## Entregas parciales sugeridas (3 etapas)
+## Entregas parciales (3 etapas)
 
 Para hacer viable el trabajo en más de una semana, dividiremos la implementación en tres entregas incrementales. Cada etapa debe incluir código funcionando, documentación y casos de prueba de lo incorporado.
 
 ### Etapa 1: Base operativa (consulta pública + registro de creadores + administración)
 
-Objetivo: disponer de una web navegable, conectada a la API, con soporte de wallet, flujo inicial de creadores y administración básica de autorizaciones.
+Objetivo: disponer de una web navegable, conectada a la API, con soporte de *wallet*, flujo inicial de creadores y administración básica de autorizaciones.
 
 Alcance mínimo:
 
@@ -343,7 +371,7 @@ Alcance mínimo:
 
 Entregables de la etapa:
 
-* Código de frontend funcionando para los flujos anteriores.
+* Código de *frontend* funcionando para los flujos anteriores.
 * Documento breve de arquitectura (qué consume de API y cómo usa Metamask).
 * Pruebas (al menos integración/UI o pruebas de componentes para los módulos implementados).
 
@@ -355,12 +383,12 @@ Alcance mínimo:
 
 * Panel de creador autorizado:
   * creación de llamados
-  * feedback de estado de transacción (pendiente, confirmada, fallida)
+  * *feedback* de estado de transacción (pendiente, confirmada, fallida)
 * Vistas públicas de llamados:
   * listado de llamados por creador
   * listado global de llamados abiertos
 * Integración explícita web/API/contratos documentada por pantalla.
-* Eventos on-chain implementados y consumibles para:
+* Eventos *on-chain* implementados y consumibles para:
   * creación de llamado
 
 Entregables de la etapa:
@@ -379,16 +407,16 @@ Alcance mínimo:
   * carga de datos
   * carga de archivos
   * cálculo de hashes
-  * registro del compromiso en cadena a través de la API (la API firma y envía la transacción de forma anónima)
+  * registro del compromiso *on-chain* a través de la API (la API firma y envía la transacción con su propia cuenta, sin requerir intervención del oferente)
 * Emisión de recibo de presentación con evidencia verificable.
 * Pantalla de verificación por recibo (subida de recibo y validación completa).
 * Flujo post-cierre:
   * subida de recibo + archivos completos
   * validación de pruebas
-  * registro on-chain de recepción
+  * registro *on-chain* de recepción
   * emisión de recibo de recepción
 * Publicación y consulta pública de archivos una vez recibidos.
-* Eventos on-chain para:
+* Eventos *on-chain* para:
   * registro de propuesta/compromiso
   * recepción de archivos post-cierre
 
@@ -405,9 +433,9 @@ Se considera cumplida la especificación cuando:
 * La aplicación web permite operar correctamente todos los roles y flujos definidos arriba.
 * Las operaciones que requieren identidad del usuario se resuelven con Metamask.
 * La presentación de propuestas es anónima y se realiza íntegramente a través de la API.
-* Las operaciones de persistencia/verificación off-chain usan la API.
+* Las operaciones de persistencia/verificación *off-chain* usan la API.
 * Los recibos permiten verificar de manera consistente lo registrado en cadena.
-* La recepción post-cierre deja evidencia on-chain, almacena los archivos y los hace accesibles públicamente.
+* La recepción post-cierre deja evidencia *on-chain*, almacena los archivos y los hace accesibles públicamente.
 * Existen eventos para todos los hechos significativos.
 
 ## Tags de entrega
@@ -455,7 +483,7 @@ git checkout tp10-etapa2
 Luego, para volver a la rama principal de trabajo:
 
 ```bash
-git checkout main
+git checkout master
 ```
 
 Cada tag debe referir a una versión completa de la etapa: con código, documentación y pruebas coherentes con el alcance indicado para esa entrega.
@@ -468,8 +496,8 @@ La interfaz web debe contemplar, como mínimo, los siguientes aspectos de uso:
 
 * Permitir que el usuario conecte y desconecte su cuenta desde el navegador.
 * Detectar la red activa y advertir cuando no coincida con la red donde están desplegados los contratos.
-* Solicitar firma de transacciones on-chain para registrar acciones que dependen de la identidad del usuario, por ejemplo el registro, la autorización, la desautorización o la creación de llamados.
-* Solicitar firma de mensajes cuando la API lo requiera para validar operaciones off-chain asociadas a una dirección determinada.
+* Solicitar firma de transacciones *on-chain* para registrar acciones sobre el contrato que dependen de la identidad del usuario, por ejemplo el registro o la creación de llamados.
+* Solicitar firma de mensajes cuando la API lo requiera para validar operaciones *off-chain* asociadas a una dirección determinada.
 
 La aplicación debe tratar a Metamask como una dependencia explícita de la interfaz. Si la extensión no está instalada, si el usuario no autorizó la cuenta, o si la red es incorrecta, la UI debe informar la situación de manera clara y permitir que el usuario continúe, cuando corresponda, con las funcionalidades públicas del sistema.
 

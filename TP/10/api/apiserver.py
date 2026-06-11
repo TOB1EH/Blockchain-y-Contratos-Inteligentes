@@ -247,14 +247,17 @@ def compute_call_id(title: str, description: str) -> str:
     # con prefijo '0x'
     return "0x" + Web3.keccak(encoded).hex()
 
-def get_contract_status(address: str) -> str:
+def compute_registration_status(address: str, db_exists: bool) -> str:
     """
-    Devuelve el estado del contrato en la direccion especificada.
+    Computa el estado de registro consultando la cadena como fuente de verdad.
+    La DB solo aporta metadatos off-chain (name, nonce).
     """
     checksum = Web3.to_checksum_address(address)
-    if cfp_factory.functions.isAuthorized(checksum).call():
+    is_auth = cfp_factory.functions.isAuthorized(checksum).call()
+    is_reg = cfp_factory.functions.isRegistered(checksum).call()
+    if is_auth:
         return "authorized"
-    if cfp_factory.functions.isRegistered(checksum).call():
+    if is_reg and db_exists:
         return "registered"
     return "pending"
 
@@ -416,19 +419,21 @@ def proposal_data(call_id, proposal):
 def get_registration(address):
     """
     Obtiene la información de registro para una dirección específica.
+    El estado se computa consultando la cadena como fuente de verdad.
     """
     if not is_valid_address(address):
         return err(messages.INVALID_ADDRESS, 400)
     try:
         reg = database.get_registration(address)
+        db_exists = reg is not None
+        status = compute_registration_status(address, db_exists)
         if reg:
             return jsonify(
-                status=reg["status"],
+                status=status,
                 name=reg["name"],
                 nonce=reg["nonce"]
             )
-        # Si no esta en la DB: consultar el contrato y devolver solo el status
-        return jsonify(status=get_contract_status(address))
+        return jsonify(status=status)
     except Exception:
         return err(messages.INTERNAL_ERROR, 500)
 
@@ -436,10 +441,21 @@ def get_registration(address):
 @app.get("/creators")
 def creators():
     """
-    Lista todos los creadores registrados en la API.
+    Lista todos los creadores registrados en la API, enriqueciendo cada uno
+    con su estado on-chain consultado en tiempo real.
     """
     try:
-        return jsonify(creators=database.get_all_registrations())
+        registrations = database.get_all_registrations()
+        result = []
+        for reg in registrations:
+            status = compute_registration_status(reg["address"], True)
+            result.append({
+                "address": reg["address"],
+                "name": reg["name"],
+                "nonce": reg["nonce"],
+                "status": status
+            })
+        return jsonify(creators=result)
     except Exception:
         return err(messages.INTERNAL_ERROR, 500)
 
@@ -447,9 +463,22 @@ def creators():
 def admin_pending():
     """
     Lista las solicitudes de registro pendientes de autorizacion.
+    Consulta getAllPending() del contrato como fuente de verdad y cruza
+    con la DB para obtener los nombres.
     """
     try:
-        return jsonify(pending=database.get_pending_registrations())
+        pending_addresses = cfp_factory.functions.getAllPending().call({
+            'from': server_account.address
+        })
+        result = []
+        for addr in pending_addresses:
+            addr_lower = addr.lower()
+            reg = database.get_registration(addr_lower)
+            result.append({
+                "address": addr,
+                "name": reg["name"] if reg else None
+            })
+        return jsonify(pending=result)
     except Exception:
         return err(messages.INTERNAL_ERROR, 500)
 
@@ -612,12 +641,11 @@ def register():
 
     try:
         reg = database.get_registration(address)
-        if reg and reg["status"] != "archived":
+        if reg:
             return err(messages.ALREADY_IN_SYSTEM, 403)
 
-        # Determinar estado consultando el contrato
-        status = get_contract_status(address)
-        database.upsert_registration(address, name, status)
+        database.upsert_registration(address, name)
+        status = compute_registration_status(address, True)
         return jsonify(status=status), 200
     except Exception:
         return err(messages.INTERNAL_ERROR, 500)
@@ -789,18 +817,18 @@ def authorize(address):
     if recovered.lower() != ADMIN_ADDRESS.lower():
         return err(messages.INVALID_SIGNATURE, 400)
 
-    # Verificar el registro
+    # Verificar el registro: debe estar registrado on-chain y en la DB
     try:
-        reg = database.get_registration(address)
-        if not reg or reg["status"] == "archived":
+        checksum = Web3.to_checksum_address(address)
+        if not cfp_factory.functions.isRegistered(checksum).call():
+            return err(messages.NOT_REGISTERED, 404)
+        if not database.get_registration(address):
             return err(messages.NOT_REGISTERED, 404)
 
         send_transaction(
-            cfp_factory.functions.authorize(Web3.to_checksum_address(address))
+            cfp_factory.functions.authorize(checksum)
         )
         database.increment_admin_nonce()
-        # Actualizar DB sincrónicamente (el listener también lo hará, idempotente)
-        database.update_registration_status(address, "authorized")
         return jsonify(message=messages.OK), 200
     except Exception:
         return err(messages.INTERNAL_ERROR, 500)
@@ -844,23 +872,21 @@ def unauthorize(address):
     if recovered.lower() != ADMIN_ADDRESS.lower():
         return err(messages.INVALID_SIGNATURE, 400)
 
+    # Verificar que la dirección esté registrada o autorizada on-chain
     try:
+        checksum = Web3.to_checksum_address(address)
+        if not cfp_factory.functions.isRegistered(checksum).call() and not cfp_factory.functions.isAuthorized(checksum).call():
+            return err(messages.NOT_REGISTERED, 404)
+
+        # Verificar que tenga un registro en la DB (preserva nonce anti-replay)
         reg = database.get_registration(address)
-        if not reg or reg["status"] == "archived":
+        if not reg:
             return err(messages.NOT_REGISTERED, 404)
 
         send_transaction(
-            cfp_factory.functions.unauthorize(Web3.to_checksum_address(address))
+            cfp_factory.functions.unauthorize(checksum)
         )
         database.increment_admin_nonce()
-
-        count = cfp_factory.functions.createdByCount(
-            Web3.to_checksum_address(address)
-        ).call()
-        if count > 0:
-            database.update_registration_status(address, "archived")
-        else:
-            database.delete_registration(address)
 
         return jsonify(message=messages.OK), 200
     except Exception:
