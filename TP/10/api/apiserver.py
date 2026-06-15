@@ -269,6 +269,17 @@ def err(msg, code):
 
 # ----- Endpoints de solo lectura (GET) -----
 
+@app.get("/calls")
+def list_calls():
+    """Devuelve el listado de llamados creados on-chain. Filtro opcional ?creator=0x..."""
+    creator = request.args.get("creator", None)
+    try:
+        calls = database.get_all_calls(creator)
+        return jsonify(calls=calls)
+    except Exception:
+        return err(messages.INTERNAL_ERROR, 500)
+
+
 @app.get("/contract-address")
 def contract_address():
     """Devuelve la direccion del contrato CFPFactory."""

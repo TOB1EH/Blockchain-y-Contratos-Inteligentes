@@ -22,6 +22,11 @@ export const TYPES = {
     { name: 'nonce', type: 'uint256' },
     { name: 'target', type: 'address' },
   ],
+  CreateRequest: [
+    { name: 'operation', type: 'string' },
+    { name: 'contract', type: 'address' },
+    { name: 'callId', type: 'bytes32' },
+  ],
 }
 
 // Construir mensaje EIP-712 para registro off-chain
@@ -57,5 +62,14 @@ export function buildUnauthorizeMessage(chainId, contractAddress, nonce, target)
     domain: getDomain(chainId, contractAddress),
     types: { AdminActionRequest: TYPES.AdminActionRequest },
     message: { operation: 'unauthorize', contract: contractAddress, nonce: BigInt(nonce), target },
+  }
+}
+
+// Construir mensaje EIP-712 para crear llamado (CreateRequest)
+export function buildCreateMessage(chainId, contractAddress, callId) {
+  return {
+    domain: getDomain(chainId, contractAddress),
+    types: { CreateRequest: TYPES.CreateRequest },
+    message: { operation: 'create', contract: contractAddress, callId },
   }
 }

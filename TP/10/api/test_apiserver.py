@@ -1674,6 +1674,58 @@ def test_calls_not_in_api() -> None:
     assert response.json()["message"].startswith(messages.CALLID_NOT_FOUND)
 
 
+def test_get_calls_list_empty() -> None:
+    """Verifica que GET /calls devuelva lista vacia antes de crear llamados."""
+    response = requests.get(url("calls"), timeout=3)
+    assert APPLICATION_JSON in response.headers["Content-type"]
+    assert response.status_code == 200
+    assert isinstance(response.json()["calls"], list)
+    # La lista vacia es valida si no hay llamados creados on-chain.
+    # Los llamados en estado 'pending' (sin confirmar on-chain) no aparecen.
+
+
+def test_get_calls_list_after_creation() -> None:
+    """Verifica que GET /calls incluya los llamados creados tras confirmacion on-chain."""
+    assert len(calls) > 0
+    response = requests.get(url("calls"), timeout=3)
+    assert APPLICATION_JSON in response.headers["Content-type"]
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["calls"], list)
+    call_ids_on_chain = set()
+    for c in body["calls"]:
+        call_ids_on_chain.add(c["call_id"])
+        assert c["status"] == "created"
+        assert "creator" in c
+        assert "cfp_address" in c
+    # Todos los llamados creados via fixture deberian estar en la lista
+    for call_id in calls:
+        assert call_id in call_ids_on_chain
+
+
+def test_get_calls_filtered_by_creator() -> None:
+    """Verifica que GET /calls?creator=0x... filtre correctamente por creador."""
+    assert len(accounts) > 0
+    creator_address = accounts[0].address
+    response = requests.get(
+        f"{SERVER}/calls?creator={creator_address}", timeout=3
+    )
+    assert APPLICATION_JSON in response.headers["Content-type"]
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["calls"], list)
+    for c in body["calls"]:
+        assert c["creator"].lower() == creator_address.lower()
+    # Llamados de otro creador no deberian aparecer
+    other_creator = accounts[1].address if len(accounts) > 1 else creator_address
+    response2 = requests.get(
+        f"{SERVER}/calls?creator={other_creator}", timeout=3
+    )
+    assert response2.status_code == 200
+    for c in response2.json()["calls"]:
+        assert c["creator"].lower() == other_creator.lower()
+
+
 def test_created_closing_time() -> None:
     """Prueba que el tiempo de cierre de una llamada creada sea correcto."""
     assert len(calls) > 0

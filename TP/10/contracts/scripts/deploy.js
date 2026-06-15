@@ -29,8 +29,10 @@ const MNEMONIC =
   process.env.CFP_MNEMONIC ?? ethers.HDNodeWallet.createRandom().mnemonic?.phrase ?? "";
 
 // Frase independiente para MetaMask (completamente distinta de CFP_MNEMONIC)
+// En desarrollo local usa una frase fija para que las cuentas persistan entre reinicios.
+const DEFAULT_METAMASK_MNEMONIC = "odor tuition process ancient private piano rule noise crazy tomorrow depend nasty";
 const METAMASK_MNEMONIC =
-  process.env.CFP_METAMASK_MNEMONIC ?? ethers.HDNodeWallet.createRandom().mnemonic?.phrase ?? "";
+  process.env.CFP_METAMASK_MNEMONIC ?? DEFAULT_METAMASK_MNEMONIC;
 
 const artifact = JSON.parse(
     readFileSync(

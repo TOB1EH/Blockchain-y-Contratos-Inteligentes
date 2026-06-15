@@ -139,6 +139,22 @@ def get_call(call_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def get_all_calls(creator: str | None = None) -> list:
+    """Devuelve todos los llamados en estado 'created', opcionalmente filtrados por creador."""
+    conn = get_connection()
+    if creator:
+        rows = conn.execute(
+            "SELECT * FROM calls WHERE status = 'created' AND creator = ? ORDER BY call_id",
+            (creator.lower(),)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM calls WHERE status = 'created' ORDER BY call_id"
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def insert_call(call_id: str, title: str, description: str) -> None:
     """Inserta un llamado nuevo en estado pending."""
     with transaction() as conn:

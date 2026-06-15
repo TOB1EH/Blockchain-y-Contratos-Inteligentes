@@ -1,9 +1,9 @@
 <script setup>
 import { ref, watch } from 'vue'
-import { Contract } from 'ethers'
+import { Contract, keccak256, toUtf8Bytes, encodeRlp } from 'ethers'
 import { useWallet } from '../composables/useWallet.js'
 import { useApi } from '../composables/useApi.js'
-import { buildRegisterMessage, buildUpdateMessage } from '../utils/eip712.js'
+import { buildRegisterMessage, buildUpdateMessage, buildCreateMessage } from '../utils/eip712.js'
 
 // Declarar estado reactivo del panel de creador
 const api = useApi()
@@ -15,12 +15,20 @@ const name = ref('')
 const newName = ref('')
 const msg = ref('')
 const loadingStatus = ref(false)
-const isRegisteredOnChain = ref(false) // Nuevo estado para saber si ya completó el Paso 1
+const isRegisteredOnChain = ref(false)
 
-// Definir ABI minima del factory para registro on-chain (agregamos isRegistered)
+// Estado para el formulario de creacion de llamado
+const callTitle = ref('')
+
+const callDescription = ref('')
+const closingDays = ref(7)
+const creatingCall = ref(false)
+
+// Definir ABI minima del factory para registro on-chain y creacion de llamados
 const FACTORY_ABI = [
   'function register()',
-  'function isRegistered(address) view returns (bool)'
+  'function isRegistered(address) view returns (bool)',
+  'function create(bytes32 callId, uint256 timestamp)'
 ]
 
 // Verificar estado del creador al conectar cuenta
@@ -128,6 +136,49 @@ async function updateProfile() {
     msg.value = `Error: ${e.message}`
   }
 }
+
+// Calcular callId = keccak256(rlp.encode([title, description]))
+function computeCallId(title, description) {
+  const encoded = encodeRlp([toUtf8Bytes(title), toUtf8Bytes(description)])
+  return keccak256(encoded)
+}
+
+// Crear un nuevo llamado (doble interaccion: off-chain + on-chain)
+async function createCall() {
+  if (!signer.value || !contractAddress.value || !callTitle.value || !callDescription.value) return
+  const callId = computeCallId(callTitle.value, callDescription.value)
+  creatingCall.value = true
+  try {
+    // Paso 1: Registrar off-chain en la API via EIP-712
+    msg.value = 'Paso 1/2: Firmando mensaje off-chain...'
+    const typedData = buildCreateMessage(chainId.value, contractAddress.value, callId)
+    const signature = await signer.value.signTypedData(
+      typedData.domain, typedData.types, typedData.message
+    )
+    const offRes = await api.postCreateCall(callId, signature, callTitle.value, callDescription.value)
+    if (offRes.status !== 201) {
+      msg.value = `Error off-chain: ${offRes.data.message}`
+      creatingCall.value = false
+      return
+    }
+    msg.value = 'Paso 1/2 completado. Ahora firma la transaccion on-chain...'
+
+    // Paso 2: Enviar transaccion on-chain al contrato factory
+    const closingTimestamp = Math.floor(Date.now() / 1000) + closingDays.value * 86400
+    const contract = new Contract(contractAddress.value, FACTORY_ABI, signer.value)
+    const tx = await contract.create(callId, closingTimestamp)
+    msg.value = `Paso 2/2: Transaccion enviada: ${tx.hash}. Esperando confirmacion...`
+    await tx.wait()
+    msg.value = `Llamado creado exitosamente. La cadena lo confirmara en breve.`
+    callTitle.value = ''
+    callDescription.value = ''
+    closingDays.value = 7
+  } catch (e) {
+    msg.value = `Error: ${e.message}`
+  } finally {
+    creatingCall.value = false
+  }
+}
 </script>
 <template>
   <div>
@@ -166,6 +217,25 @@ async function updateProfile() {
         <p>Nombre actual: {{ dbEntry?.name }}</p>
         <input v-model="newName" placeholder="Nuevo nombre" />
         <button @click="updateProfile">Actualizar</button>
+      </div>
+
+      <!-- Sección de creación de llamado (solo para creadores autorizados) -->
+      <div v-if="status === 'authorized'">
+        <hr>
+        <h3>Crear Llamado</h3>
+        <p>Ingresá los datos del nuevo llamado a presentación de propuestas.</p>
+        <div>
+          <label>Título:<br><input v-model="callTitle" placeholder="Título del llamado" :disabled="creatingCall" /></label>
+        </div>
+        <div>
+          <label>Descripción:<br><textarea v-model="callDescription" placeholder="Descripción del llamado" :disabled="creatingCall"></textarea></label>
+        </div>
+        <div>
+          <label>Días hasta el cierre:<br><input v-model.number="closingDays" type="number" min="1" max="365" :disabled="creatingCall" /></label>
+        </div>
+        <button @click="createCall" :disabled="creatingCall || !callTitle || !callDescription">
+          {{ creatingCall ? 'Creando llamado...' : 'Crear Llamado' }}
+        </button>
       </div>
       
       <p v-if="msg"><strong>{{ msg }}</strong></p>

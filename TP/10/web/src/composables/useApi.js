@@ -27,5 +27,9 @@ export function useApi() {
       apiFetch(`/authorize/${address}`, { method: 'POST', body: JSON.stringify({ signature }) }),
     postUnauthorize: (address, signature) =>
       apiFetch(`/unauthorize/${address}`, { method: 'POST', body: JSON.stringify({ signature }) }),
+    getCalls: (creator) =>
+      apiFetch(`/calls${creator ? `?creator=${creator}` : ''}`),
+    postCreateCall: (callId, signature, title, description) =>
+      apiFetch('/create', { method: 'POST', body: JSON.stringify({ callId, signature, title, description }) }),
   }
 }

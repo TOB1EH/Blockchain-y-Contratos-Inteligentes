@@ -85,7 +85,11 @@ Estados posibles (consultados on-chain como fuente de verdad):
 - `registered`: ambas interacciones completadas, pendiente de autorización
 - `authorized`: autorizado por el administrador para crear llamados
 
-Creadores autorizados pueden crear llamados (Etapa 2).
+Creadores autorizados pueden crear llamados mediante doble interacción:
+1. **Off-chain**: firma EIP-712 (`CreateRequest`) enviada a `POST /create`
+2. **On-chain**: transacción MetaMask a `CFPFactory.create(callId, timestamp)`
+
+El frontend calcula el `callId` como `keccak256(rlp.encode([title, description]))`.
 
 - Consultar estado (`GET /registrations/:address`)
 - Actualizar perfil (`PATCH /registrations/:address`, firma EIP-712)
@@ -95,7 +99,7 @@ Creadores autorizados pueden crear llamados (Etapa 2).
 Sin MetaMask. Consulta:
 
 - Listado de creadores (`GET /creators`)
-- Listado de llamados (Etapa 2)
+- Listado de llamados globales y filtrados por creador (`GET /calls?creator=0x...`)
 
 ---
 
@@ -126,6 +130,7 @@ Tipos de mensaje:
 
 - `RegisterRequest` — registro y actualización de perfil (`operation: "register"` / `"update"`)
 - `AdminActionRequest` — autorización y desautorización (`operation: "authorize"` / `"unauthorize"`)
+- `CreateRequest` — creación de llamados (`operation: "create"`)
 
 ---
 
@@ -154,7 +159,7 @@ export CFP_METAMASK_MNEMONIC="..."
 pytest test_apiserver.py -v
 ```
 
-72 tests con firmas EIP-712. Requiere dos venv separados: `venv/` para el servidor y `venv-test/` para los tests.
+75 tests con firmas EIP-712. Requiere dos venv separados: `venv/` para el servidor y `venv-test/` para los tests.
 
 ### Interfaz web (vitest)
 
