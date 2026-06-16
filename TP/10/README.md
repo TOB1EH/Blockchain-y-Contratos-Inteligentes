@@ -10,12 +10,14 @@ Tres componentes que operan en conjunto:
 
 ## 1. Puesta en marcha (tres terminales)
 
-### Terminal 1 — Blockchain local + despliegue de contratos
+### Terminal 1 — Blockchain local
 
 ```bash
 cd TP/10/contracts
 npx hardhat node
 ```
+
+### Terminal 2 - despliegue de contratos
 
 En otra terminal (sin cerrar la anterior):
 
@@ -34,7 +36,7 @@ Copiar estos valores. Se usan en los pasos siguientes.
 
 > **Importante**: Las cuentas de MetaMask se fondean automáticamente con 1000 ETH cada una durante el deploy. Para fondeo manual existe `node scripts/fund.js "<frase_metamask>"`.
 
-### Terminal 2 — Servidor de API
+### Terminal 3 — Servidor de API
 
 ```bash
 cd TP/10/api
@@ -93,13 +95,39 @@ El frontend calcula el `callId` como `keccak256(rlp.encode([title, description])
 
 - Consultar estado (`GET /registrations/:address`)
 - Actualizar perfil (`PATCH /registrations/:address`, firma EIP-712)
+- **Cerrar un llamado** (`POST /close-call`, firma `CreateRequest` con `operation: "close"`): cierra el período de propuestas on-chain una vez expirado `closingTime`.
+- Consultar entregas de sus llamados (`GET /deliveries/<call_id>`)
+- Descargar archivos de entrega (`GET /deliveries/:call_id/:proposal_id/files/<hash>`)
 
-### Público general
+### Público general / Oferente
 
-Sin MetaMask. Consulta:
+Sin MetaMask. Puede realizar consultas y operaciones sobre llamados:
 
 - Listado de creadores (`GET /creators`)
 - Listado de llamados globales y filtrados por creador (`GET /calls?creator=0x...`)
+
+**Presentación de propuestas anónimas** (Etapa 3):
+
+1. El oferente completa título y descripción en el formulario web
+2. El frontend calcula `keccak256(propuesta)` como identificador local
+3. `POST /register-proposal` con `{ callId, title, description }`
+4. La API firma y envía `CFP.registerProposal()` on-chain usando su cuenta owner
+5. La API devuelve un **recibo JSON** con: `callId`, `proposalId`, `proof` (prueba Merkle), `title`, `description`
+6. El oferente descarga el recibo como archivo `.json` para verificación futura
+
+**Verificación de recibos** (Etapa 3):
+
+1. `POST /verify-proof`: subir el archivo JSON de recibo
+2. Verificación **off-chain**: prueba Merkle contra `proposalId`
+3. Verificación **on-chain**: consulta existencia de `proposalId` en el contrato CFP
+
+**Entrega post-cierre** (Etapa 3, solo para llamados cerrados):
+
+1. `POST /deliver` con `multipart/form-data`: campo `receipt` (archivo JSON) + uno o más archivos físicos
+2. La API llama a `CFP.registerDelivery()` on-chain y espera confirmación
+3. Los archivos se almacenan en `api/uploads/` y quedan accesibles públicamente
+4. Consultar entregas de un llamado (`GET /deliveries/<call_id>`)
+5. Descargar archivos individuales (`GET /deliveries/:call_id/:proposal_id/files/<hash>`)
 
 ---
 
@@ -107,11 +135,15 @@ Sin MetaMask. Consulta:
 
 ### On-chain (MetaMask)
 
-| Acción | Método del contrato |
-|---|---|---|
-| Registro de creador | `CFPFactory.register()` |
-| Creación de llamado | `CFPFactory.create()` |
-| Autorización/Desautorización | `CFPFactory.authorize()` / `CFPFactory.unauthorize()` |
+| Acción | Método del contrato | Etapa |
+|---|---|---|---|
+| Registro de creador | `CFPFactory.register()` | 1 |
+| Autorización / Desautorización | `CFPFactory.authorize()` / `CFPFactory.unauthorize()` | 1 |
+| Creación de llamado | `CFPFactory.create()` | 2 |
+| Cierre de llamado | `CFPFactory.closeCall()` | 2 |
+| Presentación de propuesta | `CFP.registerProposal()` (API firma con cuenta owner) | 3 |
+| Consulta de cierre | `CFP.closingTime()` (lectura) | 3 |
+| Registro de entrega | `CFP.registerDelivery()` (API firma con cuenta owner) | 3 |
 
 ### Off-chain (API + EIP-712)
 
@@ -159,7 +191,7 @@ export CFP_METAMASK_MNEMONIC="..."
 pytest test_apiserver.py -v
 ```
 
-75 tests con firmas EIP-712. Requiere dos venv separados: `venv/` para el servidor y `venv-test/` para los tests.
+87 tests (Etapas 1, 2 y 3). Requiere dos venv separados: `venv/` para el servidor y `venv-test/` para los tests.
 
 ### Interfaz web (vitest)
 
@@ -180,4 +212,6 @@ La API usa SQLite (`cfp.db`) con las siguientes tablas:
 - **admin_state** — `id` (PK), `nonce`. Contador de operaciones del administrador para anti-replay.
 - **calls** — `call_id` (PK), `title`, `description`, `creator`, `cfp_address`, `status` (`pending`/`created`). El event listener actualiza `creator` y `cfp_address` al detectar `CFPCreated` on-chain.
 - **proposals** — `proof_json`, `title`, `description`, `call_id`, `proposal_id` (PK). Pruebas de Merkle para verificación off-chain (Etapa 3).
+- **deliveries** — `id` (PK), `call_id`, `proposal_id`, `receipt_json`, `created_at`. Registro de entregas post-cierre (Etapa 3).
+- **proposal_files** — `id` (PK), `delivery_id` (FK → deliveries.id), `file_hash`, `filename`, `created_at`. Archivos físicos subidos en cada entrega (Etapa 3).
 
