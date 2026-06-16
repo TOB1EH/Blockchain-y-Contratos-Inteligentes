@@ -12,4 +12,13 @@ export default defineConfig({
     hardhatNetworkHelpers,
   ],
   solidity: "0.8.19",
+  // Configurar minería automática con intervalo para simular el paso del tiempo en pruebas que dependen de timestamps
+  // networks: {
+  //   hardhat: {
+  //     mining: {
+  //       auto: true,
+  //       interval: 3000
+  //     }
+  //   }
+  // }
 });
