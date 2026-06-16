@@ -164,7 +164,13 @@ async function createCall() {
     msg.value = 'Paso 1/2 completado. Ahora firma la transaccion on-chain...'
 
     // Paso 2: Enviar transaccion on-chain al contrato factory
-    const closingTimestamp = Math.floor(Date.now() / 1000) + closingDays.value * 86400
+    
+    // Dias
+    // const closingTimestamp = Math.floor(Date.now() / 1000) + closingDays.value * 86400
+    
+    // minuitos
+    const closingTimestamp = Math.floor(Date.now() / 1000) + closingDays.value * 60
+
     const contract = new Contract(contractAddress.value, FACTORY_ABI, signer.value)
     const tx = await contract.create(callId, closingTimestamp)
     msg.value = `Paso 2/2: Transaccion enviada: ${tx.hash}. Esperando confirmacion...`
@@ -231,7 +237,8 @@ async function createCall() {
           <label>Descripción:<br><textarea v-model="callDescription" placeholder="Descripción del llamado" :disabled="creatingCall"></textarea></label>
         </div>
         <div>
-          <label>Días hasta el cierre:<br><input v-model.number="closingDays" type="number" min="1" max="365" :disabled="creatingCall" /></label>
+          <!-- <label>Días hasta el cierre:<br><input v-model.number="closingDays" type="number" min="1" max="365" :disabled="creatingCall" /></label> -->
+          <label>Minutos hasta el cierre:<br><input v-model.number="closingDays" type="number" min="1" max="1000" :disabled="creatingCall" /></label>
         </div>
         <button @click="createCall" :disabled="creatingCall || !callTitle || !callDescription">
           {{ creatingCall ? 'Creando llamado...' : 'Crear Llamado' }}

@@ -1,16 +1,21 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useApi } from '../composables/useApi.js'
-
-// Declarar estado reactivo: lista de creadores y llamados
+import ProposalSubmit from './ProposalSubmit.vue'
+import ReceiptVerifier from './ReceiptVerifier.vue'
+import PostClosingDelivery from './PostClosingDelivery.vue'
 const api = useApi()
 const creators = ref([])
 const calls = ref([])
 const loadingCreators = ref(true)
 const loadingCalls = ref(true)
 const filterCreator = ref('')
-
-// Obtener creadores y llamados desde el API al montar el componente
+// Estados de interfaz para modales/vistas expandidas
+const showVerifier = ref(false)
+const activeCallId = ref(null)
+const activeAction = ref(null) // 'submit', 'deliver', 'files'
+const callClosingTimes = ref({})
+const callFiles = ref({}) // Almacena archivos descargables por proposalId
 onMounted(async () => {
   const [cr, cl] = await Promise.all([
     api.getCreators(),
@@ -20,22 +25,73 @@ onMounted(async () => {
   calls.value = cl.data.calls || []
   loadingCreators.value = false
   loadingCalls.value = false
+  // Consultar tiempos de cierre para todos los llamados
+  for (const c of calls.value) {
+    try {
+      // Usamos fetch directamente porque getClosingTime no está en useApi
+      const res = await fetch(`/api/closing-time/${c.call_id}`)
+      if (res.ok) {
+        const data = await res.json()
+        callClosingTimes.value[c.call_id] = new Date(data.closingTime)
+      }
+    } catch (e) {
+      console.error(`Error obteniendo closingTime para ${c.call_id}`)
+    }
+  }
 })
-
-// Llamados filtrados por creador seleccionado
 const filteredCalls = computed(() => {
   if (!filterCreator.value) return calls.value
   return calls.value.filter(c => c.creator && c.creator.toLowerCase() === filterCreator.value.toLowerCase())
 })
-
-// Seleccionar un creador para filtrar sus llamados
 function selectCreator(creatorAddress) {
   filterCreator.value = creatorAddress === filterCreator.value ? '' : creatorAddress
 }
+function isCallOpen(callId) {
+  const closingTime = callClosingTimes.value[callId]
+  if (!closingTime) return false
+  return new Date() <= closingTime
+}
+function openAction(callId, action) {
+  activeCallId.value = activeCallId.value === callId && activeAction.value === action ? null : callId
+  activeAction.value = activeCallId.value ? action : null
+  
+  if (action === 'files') {
+    loadFilesForCall(callId)
+  }
+}
+// Nota: en una app real habría un endpoint para buscar deliveries por call_id. 
+// Aquí lo simulamos requiriendo que el usuario ingrese el proposal_id para ver los archivos.
+const searchProposalId = ref('')
+const filesLoadMsg = ref('')
+async function loadFilesForCall() {
+  if (!searchProposalId.value) return
+  filesLoadMsg.value = 'Buscando archivos...'
+  callFiles.value = {}
+  try {
+    const res = await api.getDeliveryInfo(searchProposalId.value)
+    if (res.status === 200) {
+      callFiles.value[searchProposalId.value] = res.data.files
+      filesLoadMsg.value = 'Archivos encontrados:'
+    } else {
+      filesLoadMsg.value = 'No se encontró entrega para este ID o aún no se han subido archivos.'
+    }
+  } catch (e) {
+    filesLoadMsg.value = 'Error al buscar archivos.'
+  }
+}
+function getDownloadUrl(proposalId, fileHash) {
+  return `/api/deliveries/${proposalId}/files/${fileHash}`
+}
 </script>
-
 <template>
   <div>
+    <div class="header-actions">
+      <button @click="showVerifier = !showVerifier" class="btn-verify">
+        {{ showVerifier ? 'Cerrar Verificador' : '🔎 Abrir Verificador de Recibos' }}
+      </button>
+    </div>
+    <ReceiptVerifier v-if="showVerifier" />
+    <hr>
     <h2>Creadores registrados</h2>
     <div v-if="loadingCreators">Cargando...</div>
     <table v-else-if="creators.length">
@@ -57,32 +113,134 @@ function selectCreator(creatorAddress) {
       </tbody>
     </table>
     <p v-else>No hay creadores registrados.</p>
-
     <h2 v-if="filterCreator">Llamados de {{ filterCreator }}</h2>
-    <h2 v-else>Llamados abiertos</h2>
+    <h2 v-else>Llamados globales</h2>
     <div v-if="loadingCalls">Cargando llamados...</div>
-    <table v-else-if="filteredCalls.length">
-      <thead>
-        <tr>
-          <th>Título</th>
-          <th>Descripción</th>
-          <th>Creador</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="cl in filteredCalls" :key="cl.call_id">
-          <td>{{ cl.title }}</td>
-          <td>{{ cl.description }}</td>
-          <td>{{ cl.creator }}</td>
-        </tr>
-      </tbody>
-    </table>
+    
+    <div v-else-if="filteredCalls.length">
+      <div v-for="cl in filteredCalls" :key="cl.call_id" class="call-card">
+        <div class="call-header">
+          <div>
+            <h4>{{ cl.title }}</h4>
+            <p class="desc">{{ cl.description }}</p>
+            <small><strong>Creador:</strong> {{ cl.creator }}</small>
+            <br>
+            <small><strong>ID:</strong> {{ cl.call_id }}</small>
+          </div>
+          <div class="call-status">
+            <span :class="['badge', isCallOpen(cl.call_id) ? 'badge-open' : 'badge-closed']">
+              {{ isCallOpen(cl.call_id) ? 'ABIERTO' : 'CERRADO' }}
+            </span>
+            <div class="call-actions">
+              <button v-if="isCallOpen(cl.call_id)" @click="openAction(cl.call_id, 'submit')" class="btn-primary">
+                Presentar Propuesta
+              </button>
+              <button v-else @click="openAction(cl.call_id, 'deliver')" class="btn-secondary">
+                Entregar Archivos
+              </button>
+              <button @click="openAction(cl.call_id, 'files')" class="btn-outline">
+                Ver Archivos
+              </button>
+            </div>
+          </div>
+        </div>
+        <!-- Renderizado dinámico según la acción seleccionada para este llamado -->
+        <div v-if="activeCallId === cl.call_id" class="action-panel">
+          <ProposalSubmit v-if="activeAction === 'submit'" :callId="cl.call_id" />
+          
+          <PostClosingDelivery v-if="activeAction === 'deliver'" />
+          <div v-if="activeAction === 'files'" class="files-panel">
+            <h4>Archivos Públicos</h4>
+            <p>Ingresa el ID de la propuesta (proposalId) para descargar sus archivos:</p>
+            <input v-model="searchProposalId" placeholder="0x..." style="width: 300px;" />
+            <button @click="loadFilesForCall">Buscar</button>
+            <p>{{ filesLoadMsg }}</p>
+            <ul v-if="callFiles[searchProposalId]">
+              <li v-for="file in callFiles[searchProposalId]" :key="file.hash">
+                <a :href="getDownloadUrl(searchProposalId, file.hash)" download target="_blank">
+                  📄 {{ file.name }}
+                </a>
+                <br>
+                <small>Hash: {{ file.hash }}</small>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
     <p v-else>No hay llamados disponibles.</p>
   </div>
 </template>
-
 <style scoped>
 .selected {
   background-color: #e3f2fd;
+}
+.header-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 20px;
+}
+.btn-verify {
+  background-color: #1976d2;
+  color: white;
+  padding: 10px 20px;
+  font-size: 1.1em;
+}
+.call-card {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 15px;
+  margin-bottom: 15px;
+  background-color: #fff;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.call-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.desc {
+  color: #555;
+  margin: 5px 0 10px 0;
+}
+.call-status {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.badge {
+  padding: 5px 10px;
+  border-radius: 12px;
+  font-weight: bold;
+  font-size: 0.85em;
+  display: inline-block;
+  align-self: flex-end;
+}
+.badge-open {
+  background-color: #4caf50;
+  color: white;
+}
+.badge-closed {
+  background-color: #f44336;
+  color: white;
+}
+.call-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.btn-primary { background-color: #4caf50; color: white; }
+.btn-secondary { background-color: #ff9800; color: white; }
+.btn-outline { background-color: transparent; border: 1px solid #ccc; color: #333; }
+.action-panel {
+  margin-top: 15px;
+  border-top: 1px dashed #eee;
+  padding-top: 15px;
+}
+.files-panel {
+  background-color: #f5f5f5;
+  padding: 15px;
+  border-radius: 5px;
 }
 </style>

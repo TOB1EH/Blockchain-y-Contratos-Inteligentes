@@ -12,7 +12,7 @@ const currentView = ref('public')
 
 <template>
   <div>
-    <h1>TP10 - Sistema CFP</h1>
+    <h1>Sistema CFP</h1>
     <div>
       <button @click="currentView = 'public'">Inicio</button>
       <button @click="currentView = 'creator'">Creador</button>
