@@ -2535,3 +2535,299 @@ def test_reregister_onchain_after_unauthorize() -> None:
     response = post_register(account.address, sign_bytes(new_msg, account), "Should Fail")
     assert response.status_code == 403
     assert response.json()["message"] == messages.ALREADY_IN_SYSTEM
+
+
+# ---------------------------------------------------------------------------
+# Etapa 3: Entrega post-cierre
+# ---------------------------------------------------------------------------
+
+_delivery_test_data: dict = {}
+
+
+def post_deliver_multipart(receipt_data: dict, file_list: list) -> requests.Response:
+    """Envía POST /deliver con multipart/form-data."""
+    return requests.post(
+        url("deliver"),
+        data={"receipt": json.dumps(receipt_data)},
+        files=[("files", (fname, content)) for fname, content in file_list],
+        timeout=15,
+    )
+
+
+def test_deliver_missing_fields() -> None:
+    """Prueba que POST /deliver falle si faltan campos requeridos."""
+    # Sin receipt
+    response = requests.post(
+        url("deliver"),
+        files=[("files", ("test.bin", b"data"))],
+        timeout=10,
+    )
+    assert response.status_code == 400
+    assert response.json()["message"] == messages.MISSING_FIELD
+
+    # Sin files
+    response = requests.post(
+        url("deliver"),
+        data={"receipt": "{}"},
+        timeout=10,
+    )
+    assert response.status_code == 400
+    assert response.json()["message"] == messages.MISSING_FIELD
+
+
+def test_deliver_nonexistent_proposal() -> None:
+    """Prueba que POST /deliver falle si la propuesta no existe en la BD."""
+    response = post_deliver_multipart(
+        {"proposalId": random_hash(), "proof": {}},
+        [("test.bin", b"test")],
+    )
+    assert response.status_code == 404
+    assert response.json()["message"].startswith(messages.PROPOSAL_NOT_FOUND)
+
+
+def test_deliver_invalid_receipt() -> None:
+    """Prueba que POST /deliver falle con recibo mal formado."""
+    # receipt no es JSON válido
+    response = requests.post(
+        url("deliver"),
+        data={"receipt": "no-json"},
+        files=[("files", ("test.bin", b"data"))],
+        timeout=10,
+    )
+    assert response.status_code == 400
+    assert response.json()["message"].startswith(messages.INVALID_PROPOSAL)
+
+    # proposalId inválido
+    response = post_deliver_multipart(
+        {"proposalId": "0xbad", "proof": {}},
+        [("test.bin", b"data")],
+    )
+    assert response.status_code == 400
+    assert response.json()["message"].startswith(messages.INVALID_PROPOSAL)
+
+
+def test_deliver_call_not_closed() -> None:
+    """Prueba que POST /deliver falle si el llamado aún no cerró."""
+    assert len(calls) > 0
+    call_id = next(iter(calls))
+
+    # Registrar una propuesta con título único en un llamado abierto (closing futuro)
+    title = f"Deliver-Open-{_run_id}"
+    description = f"Test not closed {_run_id}"
+    file_contents = [b"file_open_1", b"file_open_2"]
+    file_hashes = ["0x" + Web3.keccak(c).hex() for c in file_contents]
+
+    resp = post_register_proposal(call_id, title, description, file_hashes)
+    assert resp.status_code == 201
+    proposal_id = resp.json()["proposalId"]
+    proof = resp.json()["proof"]
+
+    # Intentar entregar → debe fallar porque el closing time está en el futuro
+    receipt_data = {"proposalId": proposal_id, "proof": proof}
+    file_list = [("f1.bin", file_contents[0]), ("f2.bin", file_contents[1])]
+    response = post_deliver_multipart(receipt_data, file_list)
+    assert response.status_code == 403
+    assert response.json()["message"].startswith(messages.CALL_NOT_CLOSED)
+
+
+def test_deliver_happy_path() -> None:
+    """Prueba el flujo completo de entrega post-cierre.
+
+    Crea un llamado con cierre a corto plazo, registra una propuesta,
+    espera que el cierre venza (system clock + evm_increaseTime),
+    entrega los archivos físicos, y verifica el resultado.
+    """
+    global _delivery_test_data
+    _delivery_test_data = {}
+
+    assert len(accounts) > 0
+    account = accounts[0]
+
+    # 1. Crear un llamado con closing time unos segundos en el futuro
+    #    (el contrato exige block.timestamp < closingTime)
+    title = f"Deliver-Happy-{_run_id}"
+    description = f"Test happy path {_run_id}"
+    
+    w3 = get_w3()
+    latest_block = w3.eth.get_block("latest")
+    current_chain_time = latest_block.timestamp
+    closing_epoch = current_chain_time + 15
+    closing_time = datetime.fromtimestamp(closing_epoch, tz=timezone.utc)
+
+    # closing_time = datetime.now(timezone.utc) + relativedelta(seconds=12)
+
+    resp = post_create(account, title, description)
+    assert resp.status_code == 201
+    call_id = make_call_id(title, description)
+    send_create_tx(account, call_id, closing_time)
+    assert wait_for_call_status(call_id, "created"), \
+        "El llamado no alcanzó estado 'created'"
+
+    # Obtener la dirección CFP del llamado
+    call_resp = requests.get(url("calls", call_id), timeout=3)
+    assert call_resp.status_code == 200
+    cfp_address = call_resp.json()["cfp"]
+
+    # 2. Crear archivos de prueba y registrar propuesta
+    file_data = {
+        "documento.pdf": b"PDF content for delivery",
+        "imagen.png": b"PNG binary data here",
+    }
+    file_hashes = []
+    for fname, content in file_data.items():
+        fhash = "0x" + Web3.keccak(content).hex()
+        file_hashes.append(fhash)
+
+    prop_title = f"Entrega {_run_id}"
+    prop_desc = f"Entrega de archivos {_run_id}"
+    resp_reg = post_register_proposal(call_id, prop_title, prop_desc, file_hashes)
+    assert resp_reg.status_code == 201
+    proposal_id = resp_reg.json()["proposalId"]
+    proof = resp_reg.json()["proof"]
+
+    # Guardar datos para tests posteriores
+    _delivery_test_data = {
+        "call_id": call_id,
+        "cfp_address": cfp_address,
+        "proposal_id": proposal_id,
+        "proof": proof,
+        "file_data": file_data,
+        "file_hashes": file_hashes,
+        "prop_title": prop_title,
+        "prop_desc": prop_desc,
+    }
+
+    # 3. Esperar a que el closing time venza (sistema real)
+    closing_epoch = int(closing_time.timestamp())
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    wait_seconds = max(closing_epoch - now_epoch + 2, 1)
+    time.sleep(wait_seconds)
+
+    # 4. Avanzar el timestamp de Hardhat muy por delante del cierre
+    w3 = get_w3()
+    w3.provider.make_request(RPCEndpoint("evm_increaseTime"), [3600])
+    w3.provider.make_request(RPCEndpoint("evm_mine"), [])
+
+    # 5. Entregar archivos vía POST /deliver
+    receipt_data = {"proposalId": proposal_id, "proof": proof}
+    file_list = [(fname, content) for fname, content in file_data.items()]
+    response = post_deliver_multipart(receipt_data, file_list)
+
+    assert response.status_code == 201, \
+        f"POST /deliver devolvió {response.status_code}: {response.json()}"
+    body = response.json()
+    assert body["message"] == messages.OK
+    assert body["proposalId"] == proposal_id
+    assert "filesRoot" in body
+    _delivery_test_data["files_root"] = body["filesRoot"]
+
+
+def test_deliver_already_delivered() -> None:
+    """Prueba que entregar la misma propuesta dos veces sea rechazado."""
+    assert "proposal_id" in _delivery_test_data, \
+        "Depende de test_deliver_happy_path"
+
+    proposal_id = _delivery_test_data["proposal_id"]
+    proof = _delivery_test_data["proof"]
+    file_data = _delivery_test_data["file_data"]
+
+    receipt_data = {"proposalId": proposal_id, "proof": proof}
+    file_list = [(fname, content) for fname, content in file_data.items()]
+    response = post_deliver_multipart(receipt_data, file_list)
+
+    assert response.status_code == 403
+    assert response.json()["message"].startswith(messages.ALREADY_DELIVERED)
+
+
+def test_get_delivery_info() -> None:
+    """Prueba que GET /deliveries/<proposal_id> devuelva la info correcta."""
+    assert "proposal_id" in _delivery_test_data, \
+        "Depende de test_deliver_happy_path"
+
+    proposal_id = _delivery_test_data["proposal_id"]
+    file_data = _delivery_test_data["file_data"]
+    files_root = _delivery_test_data["files_root"]
+
+    response = requests.get(url("deliveries", proposal_id), timeout=3)
+    assert response.status_code == 200
+
+    body = response.json()
+    assert "sender" in body
+    assert body["filesRoot"] == files_root
+    assert "deliveredAt" in body
+    assert "files" in body
+    assert len(body["files"]) == len(file_data)
+
+    # Verificar que todos los archivos estén listados
+    delivered_hashes = {f["hash"]: f["name"] for f in body["files"]}
+    file_hashes = _delivery_test_data["file_hashes"]
+    for fhash, fname in zip(file_hashes, file_data.keys()):
+        assert fhash in delivered_hashes
+        assert delivered_hashes[fhash] == fname
+
+
+def test_get_delivery_files_not_found() -> None:
+    """Prueba que GET .../files/<hash> con hash inexistente devuelva 404."""
+    assert "proposal_id" in _delivery_test_data, \
+        "Depende de test_deliver_happy_path"
+
+    proposal_id = _delivery_test_data["proposal_id"]
+    response = requests.get(
+        url("deliveries", f"{proposal_id}/files/{random_hash()}"),
+        timeout=3,
+    )
+    assert response.status_code == 404
+    assert response.json()["message"] == messages.NOT_FOUND
+
+
+def test_download_delivery_file() -> None:
+    """Prueba que GET .../files/<hash> permita descargar un archivo."""
+    assert "proposal_id" in _delivery_test_data, \
+        "Depende de test_deliver_happy_path"
+
+    proposal_id = _delivery_test_data["proposal_id"]
+    file_hashes = _delivery_test_data["file_hashes"]
+    file_data = _delivery_test_data["file_data"]
+
+    first_hash = file_hashes[0]
+    first_name = list(file_data.keys())[0]
+    first_content = file_data[first_name]
+
+    response = requests.get(
+        url("deliveries", f"{proposal_id}/files/{first_hash}"),
+        timeout=3,
+    )
+    assert response.status_code == 200
+    assert response.content == first_content
+    # Verificar el nombre de descarga en Content-Disposition
+    cd = response.headers.get("Content-Disposition", "")
+    assert first_name in cd
+
+
+def test_get_delivery_info_nonexistent() -> None:
+    """Prueba que GET /deliveries/<id> con id inexistente devuelva 404."""
+    response = requests.get(url("deliveries", random_hash()), timeout=3)
+    assert response.status_code == 404
+    assert response.json()["message"].startswith(messages.NOT_DELIVERED)
+
+
+def test_deliver_invalid_mimetype() -> None:
+    """Prueba que POST /deliver con Content-Type incorrecto falle.
+    El endpoint /deliver no valida mimetype explícitamente; al enviar JSON
+    Flask no llena request.form y detecta 'receipt' ausente → MISSING_FIELD."""
+    response = requests.post(
+        url("deliver"),
+        json={"receipt": "{}"},
+        timeout=10,
+    )
+    assert response.status_code == 400
+    assert response.json()["message"] == messages.MISSING_FIELD
+
+
+def test_get_delivery_info_invalid_hash() -> None:
+    """Prueba que GET /deliveries/<hash> con hash inválido devuelva 400."""
+    invalid = ["x", "0x", "0x0", random_hash()[:-2], random_hash() + "ab"]
+    for bad in invalid:
+        response = requests.get(url("deliveries", bad), timeout=3)
+        assert response.status_code == 400
+        assert response.json()["message"].startswith(messages.INVALID_PROPOSAL)

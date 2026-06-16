@@ -67,6 +67,21 @@ def init_db():
                 id    INTEGER PRIMARY KEY DEFAULT 1,
                 nonce INTEGER NOT NULL DEFAULT 1
             );
+            CREATE TABLE IF NOT EXISTS deliveries (
+                proposal_id TEXT PRIMARY KEY,
+                call_id     TEXT NOT NULL,
+                sender      TEXT NOT NULL,
+                files_root  TEXT NOT NULL,
+                delivered_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS proposal_files (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                proposal_id TEXT NOT NULL,
+                file_hash   TEXT NOT NULL,
+                file_name   TEXT NOT NULL,
+                file_path   TEXT NOT NULL,
+                FOREIGN KEY(proposal_id) REFERENCES deliveries(proposal_id)
+            );
         """)
 
         # Garantizar que exista exactamente una fila en admin_state
@@ -227,3 +242,40 @@ def increment_admin_nonce() -> int:
             "SELECT nonce FROM admin_state WHERE id = 1"
         ).fetchone()
     return row["nonce"]
+
+def get_delivery(proposal_id: str) -> dict | None:
+    with transaction() as conn:
+        row = conn.execute(
+            "SELECT * FROM deliveries WHERE proposal_id = ?",
+            (proposal_id.lower(),)
+        ).fetchone()
+    return dict(row) if row else None
+
+def insert_delivery(proposal_id: str, call_id: str, sender: str, files_root: str) -> None:
+    with transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO deliveries (proposal_id, call_id, sender, files_root)
+            VALUES (?, ?, ?, ?)
+            """,
+            (proposal_id.lower(), call_id.lower(), sender, files_root.lower())
+        )
+
+def insert_proposal_file(proposal_id: str, file_hash: str, file_name: str, file_path: str) -> None:
+    with transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO proposal_files (proposal_id, file_hash, file_name, file_path)
+            VALUES (?, ?, ?, ?)
+            """,
+            (proposal_id.lower(), file_hash.lower(), file_name, file_path)
+        )
+
+def get_proposal_files(proposal_id: str) -> list:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT file_hash, file_name, file_path FROM proposal_files WHERE proposal_id = ?",
+        (proposal_id.lower(),)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]

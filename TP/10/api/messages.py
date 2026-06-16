@@ -23,3 +23,8 @@ NOT_REGISTERED = "La dirección no está registrada"
 NONCE_OVERFLOW = "Overflow de nonce"
 INTERNAL_ERROR = "Error interno"
 OK = "OK"
+# Entregas Post-Cierre
+CALL_NOT_CLOSED = "La convocatoria no ha cerrado"
+ALREADY_DELIVERED = "La entrega ya fue registrada"
+NOT_DELIVERED = "La entrega no ha sido registrada"
+NOT_FOUND = "Recurso no encontrado"

@@ -12,6 +12,7 @@ from rlp.sedes import binary, List as RLPList
 
 from datetime import datetime, timezone
 from flask import Flask, jsonify, request
+from flask import send_file
 from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 from eth_account import Account
@@ -26,6 +27,13 @@ import messages
 import database
 import merkle
 from event_listener import start_listener
+
+import hashlib
+from werkzeug.utils import secure_filename
+
+# Directorio donde se guardarán los archivos subidos post-cierre
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Configurar el logging para mostrar mensajes informativos en la consola
 # durante la ejecucion del servidor
@@ -49,6 +57,7 @@ ZERO = "0x0000000000000000000000000000000000000000"
 
 # ----- Conectarse al nodo Ethereum -----
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
+w3.eth.default_block = 'pending' # para leer el estado más actualizado incluyendo transacciones pendientes
 # In yectar compatibilidad para operar sobre redes locales
 w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 
@@ -511,6 +520,37 @@ def admin_address():
     """
     return jsonify(address=ADMIN_ADDRESS)
 
+@app.get("/deliveries/<proposal_id>")
+def get_delivery_info(proposal_id):
+    """Devuelve los datos de la entrega post-cierre y la lista de archivos."""
+    if not is_valid_hash(proposal_id):
+        return err(messages.INVALID_PROPOSAL, 400)
+        
+    delivery = database.get_delivery(proposal_id)
+    if not delivery:
+        return err(messages.NOT_DELIVERED, 404)
+        
+    files = database.get_proposal_files(proposal_id)
+    return jsonify({
+        "sender": delivery["sender"],
+        "filesRoot": delivery["files_root"],
+        "deliveredAt": delivery["delivered_at"],
+        "files": [{"hash": f["file_hash"], "name": f["file_name"]} for f in files]
+    }), 200
+
+@app.get("/deliveries/<proposal_id>/files/<file_hash>")
+def download_file(proposal_id, file_hash):
+    """Permite descargar un archivo validado."""
+    if not is_valid_hash(proposal_id) or not is_valid_hash(file_hash):
+        return err(messages.INVALID_PROPOSAL, 400)
+        
+    files = database.get_proposal_files(proposal_id)
+    for f in files:
+        if f["file_hash"].lower() == file_hash.lower():
+            if os.path.exists(f["file_path"]):
+                return send_file(f["file_path"], download_name=f["file_name"])
+            
+    return err(messages.NOT_FOUND, 404)
 
 # ----- Endpoints de escritura (POST) -----
 
@@ -595,8 +635,6 @@ def register_proposal():
         ), 201
     except Exception:
         return err(messages.INTERNAL_ERROR, 500)
-
-
 
 @app.post("/register")
 def register():
@@ -730,65 +768,6 @@ def create():
 
     except Exception:
         logging.exception("Exception in /create")
-        return err(messages.INTERNAL_ERROR, 500)
-
-
-@app.patch("/registrations/<address>")
-def patch_registration(address):
-    """
-    Actualiza el nombre de un registro existente.
-    """
-    if not is_valid_address(address):
-        return err(messages.INVALID_ADDRESS, 400)
-    if address.lower() == ADMIN_ADDRESS.lower():
-        return err(messages.ADMIN_CANNOT_REGISTER, 403)
-
-    req = check_mimetype()
-    if req is None:
-        return err(messages.INVALID_MIMETYPE, 400)
-
-    name      = req.get("name")
-    signature = req.get("signature")
-
-    if name is None or signature is None:
-        return err(messages.MISSING_FIELD, 400)
-
-    name = name.rstrip()
-    if not name:
-        return err(messages.INVALID_NAME, 400)
-    if len(name.encode("utf-8")) > 512:
-        return err(messages.NAME_TOO_LONG, 400)
-
-    try:
-        reg = database.get_registration(address)
-        if not reg:
-            return err(messages.NOT_REGISTERED, 404)
-
-        nonce = reg["nonce"]
-
-        try:
-            chain_id = w3.eth.chain_id
-            signable = make_eip712_message(
-                "RegisterRequest",
-                {
-                    "operation": "update",
-                    "contract": Web3.to_checksum_address(FACTORY_ADDRESS),
-                    "nonce": nonce,
-                    "name": name
-                },
-                chain_id,
-                Web3.to_checksum_address(FACTORY_ADDRESS)
-            )
-            recovered = recover_typed_address(signable, signature)
-        except Exception:
-            return err(messages.INVALID_SIGNATURE, 400)
-
-        if recovered.lower() != address.lower():
-            return err(messages.INVALID_SIGNATURE, 400)
-
-        database.update_registration_name(address, name)
-        return jsonify(message=messages.OK), 200
-    except Exception:
         return err(messages.INTERNAL_ERROR, 500)
 
 @app.post("/authorize/<address>")
@@ -932,6 +911,163 @@ def verify_proof():
             return err(messages.INVALID_PROPOSAL, 400)
 
     return jsonify(valid=merkle.verify_proof(proof, proposal_id, leaf)), 200
+
+@app.post("/deliver")
+def deliver_files():
+    """
+    Entrega post-cierre.
+    Recibe multipart/form-data:
+      - 'receipt': el JSON completo devuelto en register-proposal
+      - 'files': los archivos físicos reales
+    """
+    if 'receipt' not in request.form:
+        return err(messages.MISSING_FIELD, 400)
+    
+    files = request.files.getlist('files')
+    if not files:
+        return err(messages.MISSING_FIELD, 400)
+    try:
+        receipt = json.loads(request.form['receipt'])
+        proposal_id = receipt.get('proposalId')
+        proof = receipt.get('proof', {})
+    except Exception:
+        return err(messages.INVALID_PROPOSAL, 400)
+    if not is_valid_hash(proposal_id):
+        return err(messages.INVALID_PROPOSAL, 400)
+    # 1. Recuperar el llamado y la propuesta
+    prop_record = database.get_proposal(proposal_id)
+    if not prop_record:
+        return err(messages.PROPOSAL_NOT_FOUND, 404)
+    
+    call_id = prop_record["call_id"]
+    try:
+        cfp = get_cfp_contract(call_id)
+    except Exception:
+        return err(messages.CALLID_NOT_FOUND, 404)
+    # 2. Verificar que el llamado esté cerrado
+    closing_ts = cfp.functions.closingTime().call()
+    now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+    if now_ts <= closing_ts:
+        return err(messages.CALL_NOT_CLOSED, 403)
+    # 3. Verificar que la propuesta esté registrada on-chain
+    proposal_bytes = bytes.fromhex(proposal_id[2:])
+    p_data = cfp.functions.proposalData(proposal_bytes).call()
+    if p_data[0] == ZERO:
+        return err(messages.PROPOSAL_NOT_FOUND, 404)
+    # 4. Verificar que no haya sido entregada ya
+    delivery_data = cfp.functions.deliveryData(proposal_bytes).call()
+    if delivery_data[4]: # 'delivered' es el quinto elemento del struct
+        return err(messages.ALREADY_DELIVERED, 403)
+    # 5. Calcular hashes de los archivos subidos
+    file_hashes = []
+    file_records = []
+    
+    for f in files:
+        file_content = f.read()
+        f.seek(0) # Resetear puntero por si acaso
+        f_hash = "0x" + Web3.keccak(file_content).hex()
+        file_hashes.append(f_hash)
+        file_records.append({
+            "hash": f_hash,
+            "name": secure_filename(f.filename or "archivo_sin_nombre"),
+            "content": file_content
+        })
+    # 6. Validar contra las pruebas del recibo
+    # Chequear que todos los hashes calculados estén en las pruebas del recibo original
+    # y que la prueba sea válida contra el proposalId.
+    for fh in file_hashes:
+        if fh not in proof:
+            return err(messages.INVALID_PROPOSAL, 400)
+        if not merkle.verify_proof(proof[fh], proposal_id, fh):
+            return err(messages.INVALID_PROPOSAL, 400)
+    # 7. Calcular el filesRoot (Raíz de Merkle exclusiva de los archivos)
+    # Reutilizamos la función de Merkle ordenando los hashes de archivos
+    file_leaves = [bytes.fromhex(h[2:]) for h in file_hashes]
+    root, _ = merkle.build_merkle_tree(file_leaves)
+    files_root_hex = "0x" + root.hex()
+    # 8. Transacción on-chain (La API paga el Gas con su server_account)
+    try:
+        send_transaction(
+            cfp.functions.registerDelivery(
+                proposal_bytes, 
+                bytes.fromhex(files_root_hex[2:])
+            )
+        )
+    except Exception as e:
+        return err(messages.INTERNAL_ERROR, 500)
+    # 9. Guardar los archivos físicos y actualizar DB
+    # Creamos subcarpeta para la propuesta
+    prop_dir = os.path.join(UPLOAD_FOLDER, proposal_id)
+    os.makedirs(prop_dir, exist_ok=True)
+    database.insert_delivery(proposal_id, call_id, p_data[0], files_root_hex)
+    for fr in file_records:
+        path = os.path.join(prop_dir, fr["name"])
+        with open(path, "wb") as out_file:
+            out_file.write(fr["content"])
+        database.insert_proposal_file(proposal_id, fr["hash"], fr["name"], path)
+    return jsonify({
+        "message": messages.OK,
+        "filesRoot": files_root_hex,
+        "proposalId": proposal_id
+    }), 201
+
+@app.patch("/registrations/<address>")
+def patch_registration(address):
+    """
+    Actualiza el nombre de un registro existente.
+    """
+    if not is_valid_address(address):
+        return err(messages.INVALID_ADDRESS, 400)
+    if address.lower() == ADMIN_ADDRESS.lower():
+        return err(messages.ADMIN_CANNOT_REGISTER, 403)
+
+    req = check_mimetype()
+    if req is None:
+        return err(messages.INVALID_MIMETYPE, 400)
+
+    name      = req.get("name")
+    signature = req.get("signature")
+
+    if name is None or signature is None:
+        return err(messages.MISSING_FIELD, 400)
+
+    name = name.rstrip()
+    if not name:
+        return err(messages.INVALID_NAME, 400)
+    if len(name.encode("utf-8")) > 512:
+        return err(messages.NAME_TOO_LONG, 400)
+
+    try:
+        reg = database.get_registration(address)
+        if not reg:
+            return err(messages.NOT_REGISTERED, 404)
+
+        nonce = reg["nonce"]
+
+        try:
+            chain_id = w3.eth.chain_id
+            signable = make_eip712_message(
+                "RegisterRequest",
+                {
+                    "operation": "update",
+                    "contract": Web3.to_checksum_address(FACTORY_ADDRESS),
+                    "nonce": nonce,
+                    "name": name
+                },
+                chain_id,
+                Web3.to_checksum_address(FACTORY_ADDRESS)
+            )
+            recovered = recover_typed_address(signable, signature)
+        except Exception:
+            return err(messages.INVALID_SIGNATURE, 400)
+
+        if recovered.lower() != address.lower():
+            return err(messages.INVALID_SIGNATURE, 400)
+
+        database.update_registration_name(address, name)
+        return jsonify(message=messages.OK), 200
+    except Exception:
+        return err(messages.INTERNAL_ERROR, 500)
 
 
 def check_mimetype():
