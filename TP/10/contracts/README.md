@@ -337,14 +337,14 @@ Los nuevos tests están en el bloque `"Entrega de archivos post-cierre"` dentro 
 | `debe rechazar la entrega duplicada` | Registra entrega dos veces para la misma propuesta; espera revert con "La entrega ya fue registrada" |
 | `debe devolver datos vacíos para una propuesta sin entrega` | Consulta `deliveryData()` para una propuesta sin entrega y verifica `delivered == false` y `blockNumber == 0` |
 
-Total: **67 tests** (61 de TP9 + 6 nuevos).
+Total: **79 tests** (48 de CFPFactory + 31 de CFP).
 
 ### Script de despliegue (`scripts/deploy.js`)
 
 Cambios respecto al TP9:
 
 * **Exporta `deployments/CFPFactory.json`**: al desplegar, genera un archivo JSON con `address`, `chainId` y `abi` del contrato. La API y el frontend pueden leer este archivo para evitar direcciones hardcodeadas.
-* **Deriva la cuenta administradora**: imprime la dirección de la cuenta 2 (`m/44'/60'/0'/0/2`) como `CFP_ADMIN_ADDRESS`. Esta cuenta es distinta del deployer (índice 0) y se usa para firmar operaciones administrativas.
+* **Deriva la cuenta administradora**: imprime la dirección de la cuenta 0 (`m/44'/60'/0'/0/0`) de `CFP_METAMASK_MNEMONIC` como `CFP_ADMIN_ADDRESS`. Esta cuenta es distinta del owner on-chain y se usa para firmar operaciones administrativas desde MetaMask.
 * **Salida lista para exportar**: imprime los tres exports listos para copiar y pegar en la terminal de la API: `CFP_MNEMONIC`, `CFP_FACTORY_ADDRESS`, `CFP_ADMIN_ADDRESS`.
 
 ### Paquetes y comandos

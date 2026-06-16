@@ -511,6 +511,75 @@ El campo `:proposal` ahora es la raíz del árbol de Merkle devuelta por `POST /
 * **`POST /unauthorize/:address`**: Permite al administrador revocar la autorización de una dirección.
 * **`POST /verify-proof`**: Verifica si un hash pertenece a un árbol de Merkle dado su `proposalId` (raíz) y la prueba de Merkle. La prueba no puede tener más de 7 elementos (log₂ 128).
 
+### Endpoints Etapa 3
+
+#### `POST /deliver`
+
+* Registra la entrega post-cierre de los archivos comprometidos en una propuesta. El servidor verifica la integridad de los archivos contra el recibo original, calcula la raíz de Merkle de los archivos, envía una transacción on-chain a `CFP.registerDelivery()` y almacena los archivos en disco.
+* Método: `POST`
+* Content-type: `multipart/form-data`
+* Cuerpo:
+  * `receipt`: String JSON con el recibo original devuelto por `POST /register-proposal`. Debe contener `proposalId` y `proof`.
+  * `files`: Uno o más archivos físicos. Cada archivo se verifica contra su hash keccak256 contenido en el recibo.
+* Retorno exitoso:
+  * Código HTTP: 201
+  * Cuerpo: Un objeto JSON con los campos:
+    * `message`: valor OK.
+    * `filesRoot`: raíz del árbol de Merkle de los archivos entregados (`0x…`).
+    * `proposalId`: identificador de la propuesta entregada.
+* Retorno fallido:
+
+  | Causa                              | Código | Mensaje              |
+  |-----------------------------------|--------|----------------------|
+  | Content-Type incorrecto           | 400    | INVALID_MIMETYPE     |
+  | campo requerido ausente           | 400    | MISSING_FIELD        |
+  | recibo mal formado o proposalId inválido | 400 | INVALID_PROPOSAL |
+  | propuesta no encontrada en BD     | 404    | PROPOSAL_NOT_FOUND   |
+  | llamado no encontrado             | 404    | CALLID_NOT_FOUND     |
+  | convocatoria no cerrada           | 403    | CALL_NOT_CLOSED      |
+  | entrega ya registrada             | 403    | ALREADY_DELIVERED    |
+  | hash de archivo no coincide con recibo | 400 | INVALID_PROPOSAL   |
+  | desconocida                       | 500    | INTERNAL_ERROR       |
+
+#### `GET /deliveries/<proposal_id>`
+
+* Devuelve la información de la entrega post-cierre de una propuesta.
+* Método: `GET`
+* Argumento: `:proposal_id` es el hash que identifica a la propuesta.
+* Retorno exitoso:
+  * Código HTTP: 200
+  * Cuerpo: Un objeto JSON con los campos:
+    * `sender`: dirección que registró la entrega (cuenta del servidor).
+    * `filesRoot`: raíz del árbol de Merkle de los archivos entregados.
+    * `deliveredAt`: fecha y hora de la entrega en formato ISO 8601.
+    * `files`: lista de objetos con `hash` y `name` para cada archivo.
+* Retorno fallido:
+
+  | Causa                     | Código | Mensaje             |
+  |---------------------------|--------|---------------------|
+  | proposalId mal formado   | 400    | INVALID_PROPOSAL    |
+  | entrega no registrada     | 404    | NOT_DELIVERED       |
+  | desconocida               | 500    | INTERNAL_ERROR      |
+
+#### `GET /deliveries/<proposal_id>/files/<file_hash>`
+
+* Permite descargar un archivo entregado, identificado por su hash keccak256.
+* Método: `GET`
+* Argumentos:
+  * `:proposal_id` hash de la propuesta.
+  * `:file_hash` hash keccak256 del archivo a descargar.
+* Retorno exitoso:
+  * Código HTTP: 200
+  * Contenido: el archivo binario.
+  * Header `Content-Disposition`: incluye el nombre original del archivo.
+* Retorno fallido:
+
+  | Causa                            | Código | Mensaje        |
+  |----------------------------------|--------|----------------|
+  | proposalId o fileHash inválido   | 400    | INVALID_PROPOSAL |
+  | archivo no encontrado            | 404    | NOT_FOUND      |
+  | desconocida                      | 500    | INTERNAL_ERROR |
+
 ### Configuración
 
 Se agrega la variable de entorno `CFP_ADMIN_ADDRESS`, que contiene la dirección autorizada a firmar las operaciones `/authorize` y `/unauthorize`.
@@ -550,6 +619,56 @@ Se incorpora `ADMIN_CANNOT_REGISTER`: "La cuenta administradora no puede registr
 ## Base de datos
 
 El servidor mantiene una base de datos local para almacenar información complementaria que no está disponible en el contrato. La base de datos se crea automáticamente si no existe y contiene al menos los siguientes datos por dirección registrada: nombre, nonce actual y estado de registro.
+
+### Tabla `calls`
+
+Almacena los metadatos de los llamados registrados vía `POST /create`.
+
+| Campo       | Tipo    | Descripción                                    |
+|-------------|---------|------------------------------------------------|
+| `call_id`   | TEXT PK | Hash que identifica al llamado                 |
+| `title`     | TEXT    | Título del llamado                             |
+| `description` | TEXT  | Descripción del llamado                        |
+| `creator`   | TEXT    | Dirección del creador                          |
+| `status`    | TEXT    | `"pending"` o `"created"`                      |
+
+### Tabla `proposals`
+
+Almacena los metadatos de las propuestas registradas vía `POST /register-proposal`.
+
+| Campo         | Tipo    | Descripción                                      |
+|---------------|---------|--------------------------------------------------|
+| `proposal_id` | TEXT PK | Hash raíz del árbol de Merkle de la propuesta    |
+| `call_id`     | TEXT FK | Hash del llamado asociado                        |
+| `title`       | TEXT    | Título de la propuesta                           |
+| `description` | TEXT    | Descripción de la propuesta                      |
+| `sender`      | TEXT    | Dirección que registró la propuesta              |
+
+### Tabla `deliveries`
+
+Almacena los registros de entrega post-cierre vía `POST /deliver`.
+
+| Campo         | Tipo    | Descripción                                      |
+|---------------|---------|--------------------------------------------------|
+| `proposal_id` | TEXT PK | Hash de la propuesta entregada                   |
+| `call_id`     | TEXT    | Hash del llamado asociado                        |
+| `sender`      | TEXT    | Dirección que registró la entrega                |
+| `files_root`  | TEXT    | Raíz del árbol de Merkle de los archivos         |
+| `delivered_at`| DATETIME | Fecha y hora de la entrega                      |
+
+### Tabla `proposal_files`
+
+Almacena los archivos físicos entregados en una entrega post-cierre.
+
+| Campo         | Tipo    | Descripción                                      |
+|---------------|---------|--------------------------------------------------|
+| `id`          | INTEGER PK | Identificador autoincremental                  |
+| `proposal_id` | TEXT FK | Hash de la propuesta                            |
+| `file_hash`   | TEXT    | Hash keccak256 del archivo                      |
+| `file_name`   | TEXT    | Nombre original del archivo                     |
+| `file_path`   | TEXT    | Ruta en disco del archivo almacenado            |
+
+### Estados de registro
 
 Los posibles estados en la base de datos son:
 
@@ -740,7 +859,7 @@ CFP_MNEMONIC="..." CFP_FACTORY_ADDRESS="0x..." CFP_ADMIN_ADDRESS="0x..." \
 pytest test_apiserver.py -v
 ```
 
-71 tests, todos con firmas EIP-712.
+**87 tests** que incorporan los 75 de entregas anteriores más 12 nuevos de Etapa 3.
 
 ### Ejecución de un test individual
 
@@ -752,7 +871,7 @@ Los tests tienen dependencias de estado entre sí y están diseñados para ejecu
 
 ### Total de tests
 
-**71 tests** que cubren:
+**87 tests** que cubren:
 
 * Registro y autorización de creadores (con firmas EIP-712)
 * Creación y consulta de llamados
@@ -760,6 +879,13 @@ Los tests tienen dependencias de estado entre sí y están diseñados para ejecu
 * Verificación de pruebas on-chain y off-chain
 * Validaciones de firma, nonce y direcciones
 * Casos borde: administrador no puede registrarse como creador
+* **Nuevos en Etapa 3**: Entrega post-cierre con archivos físicos
+  * Validación contra recibo original (pruebas de Merkle)
+  * Rechazo por convocatoria no cerrada (`CALL_NOT_CLOSED`)
+  * Rechazo por entrega duplicada (`ALREADY_DELIVERED`)
+  * Consulta de información de entrega (`GET /deliveries`)
+  * Descarga de archivos entregados (`GET /deliveries/.../files/...`)
+  * Casos borde: recibo inválido, propuesta inexistente, hashes inválidos
 
 Todas las firmas en los tests se generan con EIP-712 mediante `encode_typed_data` y se envían como parte del cuerpo de las solicitudes HTTP.
 
@@ -789,5 +915,9 @@ Todas las firmas en los tests se generan con EIP-712 mediante `encode_typed_data
 | NOT_REGISTERED        | "La dirección no está registrada"            |
 | NONCE_OVERFLOW        | "Overflow de nonce"                          |
 | ADMIN_CANNOT_REGISTER | "La cuenta administradora no puede registrarse como creador" |
+| CALL_NOT_CLOSED       | "La convocatoria no ha cerrado"              |
+| ALREADY_DELIVERED     | "La entrega ya fue registrada"               |
+| NOT_DELIVERED         | "La entrega no ha sido registrada"           |
+| NOT_FOUND             | "Recurso no encontrado"                      |
 | INTERNAL_ERROR        | "Error interno"                              |
 | OK                    | "OK"                                         |
