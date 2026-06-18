@@ -110,22 +110,10 @@ async function verifyReceipt() {
 </template>
 <style scoped>
 .verifier-box {
-  border: 1px solid #1976d2;
-  padding: 15px;
-  margin-top: 15px;
-  border-radius: 5px;
-  background-color: #e3f2fd;
-}
-.success-box {
-  background-color: #e8f5e9;
-  padding: 10px;
-  border: 1px solid #c8e6c9;
-  border-radius: 4px;
-  margin-top: 10px;
-}
-.error-msg {
-  color: #d32f2f;
-  font-weight: bold;
-  margin-top: 10px;
+  background: var(--color-info-light);
+  border: 1px solid var(--color-info);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-top: var(--spacing-md);
 }
 </style>

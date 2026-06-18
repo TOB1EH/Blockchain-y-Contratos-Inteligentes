@@ -13,20 +13,22 @@ const currentView = ref('public')
 <template>
   <div>
     <h1>Sistema CFP</h1>
-    <div>
-      <button @click="currentView = 'public'">Inicio</button>
-      <button @click="currentView = 'creator'">Creador</button>
-      <button @click="currentView = 'admin'">Admin</button>
-      <span v-if="!isConnected">
-        <button @click="connectWallet">Conectar MetaMask</button>
-      </span>
-      <span v-else>
-        <span>{{ account }}</span>
-        <span v-if="!isCorrectNetwork" style="color:red"> Red incorrecta (debe ser 31337)</span>
-        <button @click="disconnectWallet">Desconectar</button>
+    <div class="nav-bar">
+      <button :class="{ 'nav-active': currentView === 'public' }" @click="currentView = 'public'">Inicio</button>
+      <button :class="{ 'nav-active': currentView === 'creator' }" @click="currentView = 'creator'">Creador</button>
+      <button :class="{ 'nav-active': currentView === 'admin' }" @click="currentView = 'admin'">Admin</button>
+      <span class="nav-wallet">
+        <span v-if="!isConnected">
+          <button @click="connectWallet">Conectar MetaMask</button>
+        </span>
+        <span v-else>
+          <span class="wallet-address">{{ account }}</span>
+          <span v-if="!isCorrectNetwork" class="network-error">Red incorrecta (debe ser 31337)</span>
+          <button @click="disconnectWallet">Desconectar</button>
+        </span>
       </span>
     </div>
-    <div v-if="walletError" style="color:red">{{ walletError }}</div>
+    <div v-if="walletError" class="wallet-error">{{ walletError }}</div>
     <hr>
     <PublicView v-if="currentView === 'public'" />
     <CreatorPanel v-else-if="currentView === 'creator'" />

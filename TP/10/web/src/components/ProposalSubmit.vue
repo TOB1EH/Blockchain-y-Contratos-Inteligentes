@@ -123,20 +123,10 @@ function downloadReceipt(receiptObj) {
 </template>
 <style scoped>
 .proposal-box {
-  border: 1px solid #ccc;
-  padding: 15px;
-  margin-top: 15px;
-  border-radius: 5px;
-  background-color: #f9f9f9;
-}
-.feedback {
-  font-weight: bold;
-  color: #333;
-}
-.success-box {
-  background-color: #e8f5e9;
-  padding: 10px;
-  border: 1px solid #c8e6c9;
-  border-radius: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-top: var(--spacing-md);
 }
 </style>

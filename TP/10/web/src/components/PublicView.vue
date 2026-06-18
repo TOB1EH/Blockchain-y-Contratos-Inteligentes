@@ -4,18 +4,21 @@ import { useApi } from '../composables/useApi.js'
 import ProposalSubmit from './ProposalSubmit.vue'
 import ReceiptVerifier from './ReceiptVerifier.vue'
 import PostClosingDelivery from './PostClosingDelivery.vue'
+
 const api = useApi()
 const creators = ref([])
 const calls = ref([])
 const loadingCreators = ref(true)
 const loadingCalls = ref(true)
 const filterCreator = ref('')
+
 // Estados de interfaz para modales/vistas expandidas
 const showVerifier = ref(false)
 const activeCallId = ref(null)
 const activeAction = ref(null) // 'submit', 'deliver', 'files'
 const callClosingTimes = ref({})
 const callFiles = ref({}) // Almacena archivos descargables por proposalId
+
 onMounted(async () => {
   const [cr, cl] = await Promise.all([
     api.getCreators(),
@@ -39,18 +42,22 @@ onMounted(async () => {
     }
   }
 })
+
 const filteredCalls = computed(() => {
   if (!filterCreator.value) return calls.value
   return calls.value.filter(c => c.creator && c.creator.toLowerCase() === filterCreator.value.toLowerCase())
 })
+
 function selectCreator(creatorAddress) {
   filterCreator.value = creatorAddress === filterCreator.value ? '' : creatorAddress
 }
+
 function isCallOpen(callId) {
   const closingTime = callClosingTimes.value[callId]
   if (!closingTime) return false
   return new Date() <= closingTime
 }
+
 function openAction(callId, action) {
   activeCallId.value = activeCallId.value === callId && activeAction.value === action ? null : callId
   activeAction.value = activeCallId.value ? action : null
@@ -59,6 +66,7 @@ function openAction(callId, action) {
     loadFilesForCall(callId)
   }
 }
+
 // Nota: en una app real habría un endpoint para buscar deliveries por call_id. 
 // Aquí lo simulamos requiriendo que el usuario ingrese el proposal_id para ver los archivos.
 const searchProposalId = ref('')
@@ -87,7 +95,7 @@ function getDownloadUrl(proposalId, fileHash) {
   <div>
     <div class="header-actions">
       <button @click="showVerifier = !showVerifier" class="btn-verify">
-        {{ showVerifier ? 'Cerrar Verificador' : '🔎 Abrir Verificador de Recibos' }}
+        {{ showVerifier ? 'Cerrar Verificador' : 'Abrir Verificador de Recibos' }}
       </button>
     </div>
     <ReceiptVerifier v-if="showVerifier" />
@@ -138,7 +146,7 @@ function getDownloadUrl(proposalId, fileHash) {
               <button v-else @click="openAction(cl.call_id, 'deliver')" class="btn-secondary">
                 Entregar Archivos
               </button>
-              <button @click="openAction(cl.call_id, 'files')" class="btn-outline">
+              <button v-if="!isCallOpen(cl.call_id)" @click="openAction(cl.call_id, 'files')" class="btn-outline">
                 Ver Archivos
               </button>
             </div>
@@ -172,75 +180,53 @@ function getDownloadUrl(proposalId, fileHash) {
   </div>
 </template>
 <style scoped>
-.selected {
-  background-color: #e3f2fd;
-}
 .header-actions {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: 20px;
+  margin-bottom: var(--spacing-md);
 }
-.btn-verify {
-  background-color: #1976d2;
-  color: white;
-  padding: 10px 20px;
-  font-size: 1.1em;
-}
+
 .call-card {
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  padding: 15px;
-  margin-bottom: 15px;
-  background-color: #fff;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  box-shadow: var(--shadow-sm);
 }
+
 .call-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: var(--spacing-md);
 }
-.desc {
-  color: #555;
-  margin: 5px 0 10px 0;
-}
+
 .call-status {
   text-align: right;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--spacing-sm);
+  align-items: flex-end;
 }
-.badge {
-  padding: 5px 10px;
-  border-radius: 12px;
-  font-weight: bold;
-  font-size: 0.85em;
-  display: inline-block;
-  align-self: flex-end;
-}
-.badge-open {
-  background-color: #4caf50;
-  color: white;
-}
-.badge-closed {
-  background-color: #f44336;
-  color: white;
-}
+
 .call-actions {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--spacing-xs);
 }
-.btn-primary { background-color: #4caf50; color: white; }
-.btn-secondary { background-color: #ff9800; color: white; }
-.btn-outline { background-color: transparent; border: 1px solid #ccc; color: #333; }
+
 .action-panel {
-  margin-top: 15px;
-  border-top: 1px dashed #eee;
-  padding-top: 15px;
+  margin-top: var(--spacing-md);
+  border-top: 1px dashed var(--color-border);
+  padding-top: var(--spacing-md);
 }
+
 .files-panel {
-  background-color: #f5f5f5;
-  padding: 15px;
-  border-radius: 5px;
+  background: #fafafa;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-top: var(--spacing-sm);
 }
 </style>

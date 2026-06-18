@@ -79,21 +79,10 @@ async function deliverFiles() {
 </template>
 <style scoped>
 .delivery-box {
-  border: 1px solid #ff9800;
-  padding: 15px;
-  margin-top: 15px;
-  border-radius: 5px;
-  background-color: #fff3e0;
-}
-.feedback {
-  font-weight: bold;
-  color: #333;
-  margin-top: 10px;
-}
-.success-box {
-  background-color: #e8f5e9;
-  padding: 10px;
-  border: 1px solid #c8e6c9;
-  border-radius: 4px;
+  background: var(--color-warning-light);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-top: var(--spacing-md);
 }
 </style>
