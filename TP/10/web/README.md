@@ -37,7 +37,7 @@ web/
 │   │   ├── CreatorPanel.vue       # Panel de creador: registro, perfil, creación llamados
 │   │   ├── AdminPanel.vue         # Panel de admin: autorizar/desautorizar
 │   │   ├── ProposalSubmit.vue     # Presentación anónima de propuesta (sin MetaMask)
-│   │   ├── ReceiptVerifier.vue    # Verificación de recibo (Merkle + on-chain)
+│   │   ├── ReceiptVerifier.vue    # Verificación de recibo (Merkle + on-chain, soporta proposal y delivery)
 │   │   └── PostClosingDelivery.vue # Entrega post-cierre con archivos físicos
 │   ├── composables/
 │   │   ├── useWallet.js           # Conexión/desconexión MetaMask
@@ -197,11 +197,21 @@ Cualquier usuario puede presentar una propuesta para un llamado:
 
 ### Verificación de recibo
 
+El verificador acepta dos tipos de recibo:
+
+**Recibo de propuesta** (de `POST /register-proposal`):
 | Paso | Acción | Componente |
 |------|--------|------------|
 | 1 | Cargar recibo JSON descargado | `ReceiptVerifier.vue` |
 | 2 | Verificar pruebas Merkle contra `proposalId` vía API (`POST /verify-proof`) | `ReceiptVerifier.vue` vía `useApi.js` |
 | 3 | (Opcional) Consultar `CFP.proposalData(proposalId)` on-chain con MetaMask | `ReceiptVerifier.vue` |
+
+**Recibo de entrega** (de `POST /deliver`, contiene `txHash` y `filesRoot`):
+| Paso | Acción | Componente |
+|------|--------|------------|
+| 1 | Cargar archivo JSON de recibo de entrega | `ReceiptVerifier.vue` |
+| 2 | Consultar `CFP.deliveryData(proposalId)` on-chain con MetaMask | `ReceiptVerifier.vue` |
+| 3 | Verificar que `delivered` sea `true` y que `filesRoot` coincida | `ReceiptVerifier.vue` |
 
 ### Entrega post-cierre
 
@@ -213,7 +223,8 @@ Una vez cerrado el llamado, el oferente entrega los archivos físicos:
 | 2 | Enviar a `POST /deliver` como `multipart/form-data` | `PostClosingDelivery.vue` vía `useApi.js` |
 | 3 | La API verifica hashes contra el recibo y registra `registerDelivery()` on-chain | API |
 | 4 | La API almacena archivos en disco y actualiza DB | API |
-| 5 | Confirmación de entrega exitosa | `PostClosingDelivery.vue` |
+| 5 | Confirmación de entrega exitosa (muestra `proposalId`, `filesRoot`, `txHash` y `blockNumber`) | `PostClosingDelivery.vue` |
+| 6 | Descargar recibo de entrega JSON para verificación posterior | `PostClosingDelivery.vue` |
 
 ### Consulta pública de entregas
 
@@ -239,7 +250,8 @@ Usan `vi.mock()` para simular la API (`useApi.js`) y `@vue/test-utils` para mont
 | `PublicView.vue` (llamados) | `GET /calls`, `GET /calls?creator=0x...` | `CFPFactory.calls()`, `CFPFactory.createdByCount()` |
 | `PublicView.vue` (propuesta) | — | Botón abre `ProposalSubmit.vue` |
 | `PublicView.vue` (entrega) | — | Botón abre `PostClosingDelivery.vue` (solo cerrados) |
-| `PublicView.vue` (ver archivos) | `GET /deliveries/<proposal_id>`, `GET /deliveries/.../files/<hash>` | — |
+| `PublicView.vue` (ver entregas por llamado) | `GET /calls/<call_id>/deliveries` | — |
+| `PublicView.vue` (descargar archivo) | `GET /deliveries/.../files/<hash>` | — |
 | `CreatorPanel.vue` (registro) | `POST /register` | `CFPFactory.register()` (tx MetaMask) |
 | `CreatorPanel.vue` (estado) | `GET /registrations/:address` | `CFPFactory.isRegistered()`, `CFPFactory.isAuthorized()` |
 | `CreatorPanel.vue` (perfil) | `PATCH /registrations/:address` | — |

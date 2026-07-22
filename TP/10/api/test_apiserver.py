@@ -691,16 +691,25 @@ def post_register(address, signature, name="Test User"):
     )
 
 
-def post_register_proposal(call_id, title, description, files=None):
-    """Registra una propuesta enviando título, descripción y archivos."""
+def file_hash(content: bytes) -> str:
+    """Calcula el keccak256 de un contenido binario y lo devuelve como hex."""
+    return "0x" + Web3.keccak(content).hex()
+
+def post_register_proposal(call_id, title, description, file_contents=None):
+    """Registra una propuesta enviando título, descripción y archivos via multipart."""
+    data = {
+        "callId": call_id,
+        "title": title,
+        "description": description,
+    }
+    files_to_upload = []
+    if file_contents:
+        for i, content in enumerate(file_contents):
+            files_to_upload.append(("files", (f"file_{i}.bin", content)))
     return requests.post(
         url("register-proposal"),
-        json={
-            "callId": call_id,
-            "title": title,
-            "description": description,
-            "files": files if files is not None else [],
-        },
+        data=data,
+        files=files_to_upload if files_to_upload else None,
         timeout=10,
     )
 
@@ -1775,16 +1784,17 @@ def test_register_proposal() -> None:
     for call_id in calls:
         title = f"Propuesta {_run_id}"
         description = f"Descripción {_run_id}"
-        files = [random_hash(), random_hash()]
-        proposal_id = compute_proposal_id(call_id, title, description, files)
-        response = post_register_proposal(call_id, title, description, files)
+        file_contents = [b"contenido_archivo_1", b"contenido_archivo_2"]
+        file_hashes = [file_hash(c) for c in file_contents]
+        proposal_id = compute_proposal_id(call_id, title, description, file_hashes)
+        response = post_register_proposal(call_id, title, description, file_contents)
         assert APPLICATION_JSON in response.headers["Content-type"]
         assert response.status_code == 201
         validate(instance=response.json(), schema=register_proposal_schema)
         assert response.json()["message"] == messages.OK
         assert response.json()["proposalId"] == proposal_id
         proof = response.json()["proof"]
-        expected_proofs = compute_proposal_proofs(call_id, title, description, files)
+        expected_proofs = compute_proposal_proofs(call_id, title, description, file_hashes)
         assert proof == expected_proofs
         for leaf_hex, siblings in proof.items():
             assert verify_merkle_proof(siblings, proposal_id, leaf_hex)
@@ -1810,7 +1820,7 @@ def test_register_proposal() -> None:
         assert set(pd["proof"].keys()) == {call_key, title_key, desc_key}
         for leaf_hex, siblings in pd["proof"].items():
             assert verify_merkle_proof(siblings, proposal_id, leaf_hex)
-        response = post_register_proposal(call_id, title, description, files)
+        response = post_register_proposal(call_id, title, description, file_contents)
         assert APPLICATION_JSON in response.headers["Content-type"]
         validate(instance=response.json(), schema=message_schema)
         assert response.status_code == 403
@@ -1818,32 +1828,33 @@ def test_register_proposal() -> None:
 
 
 def test_register_proposal_invalid_mimetype() -> None:
-    """Prueba que el registro de propuesta falle con un mimetype inválido."""
+    """Prueba que el registro de propuesta falle si se envía JSON en lugar de multipart."""
     assert len(calls) > 0
     for call_id in calls:
+        # Enviar JSON en lugar de multipart → request.form vacío → MISSING_FIELD
         response = requests.post(
             url("register-proposal"),
-            data={"callId": call_id, "title": "t", "description": "d", "files": []},
+            json={"callId": call_id, "title": "t", "description": "d"},
             timeout=10,
         )
         assert APPLICATION_JSON in response.headers["Content-type"]
         validate(instance=response.json(), schema=message_schema)
-        assert response.json()["message"].startswith(messages.INVALID_MIMETYPE)
         assert response.status_code == 400
+        assert response.json()["message"] == messages.MISSING_FIELD
 
 
 def test_register_proposal_missing_field() -> None:
     """Prueba que el registro de propuesta falle si falta algún campo requerido."""
     call_id = random_hash()
+    # files es opcional, solo probar campos requeridos ausentes
     cases = [
-        {"title": "t", "description": "d", "files": []},
-        {"callId": call_id, "description": "d", "files": []},
-        {"callId": call_id, "title": "t", "files": []},
-        {"callId": call_id, "title": "t", "description": "d"},
+        {"description": "d"},
+        {"callId": call_id},
+        {"title": "t"},
         {},
     ]
     for body in cases:
-        response = requests.post(url("register-proposal"), json=body, timeout=10)
+        response = requests.post(url("register-proposal"), data=body, timeout=10)
         assert APPLICATION_JSON in response.headers["Content-type"]
         validate(instance=response.json(), schema=message_schema)
         assert response.status_code == 400
@@ -1876,62 +1887,55 @@ def test_register_proposal_invalid_call() -> None:
 
 
 def test_register_proposal_invalid_proposal() -> None:
-    """Prueba que el registro de propuesta falle si files no es una lista
-    o contiene hashes inválidos."""
+    """Prueba que el registro de propuesta falle con archivos duplicados."""
     assert len(calls) > 0
     title, description = "t", "d"
-    invalid_files_cases = [
-        "not-a-list",
-        42,
-        {"key": random_hash()},
-        ["x", random_hash()],
-        ["0x", random_hash()],
-        [random_hash()[:-2], random_hash()],
-        [random_hash() + "ab"],
-    ]
     for call_id in calls:
-        for bad_files in invalid_files_cases:
-            response = requests.post(
-                url("register-proposal"),
-                json={
-                    "callId": call_id,
-                    "title": title,
-                    "description": description,
-                    "files": bad_files,
-                },
-                timeout=10,
-            )
-            assert APPLICATION_JSON in response.headers["Content-type"]
-            validate(instance=response.json(), schema=message_schema)
-            assert response.status_code == 400
-            assert response.json()["message"].startswith(messages.INVALID_PROPOSAL)
+        # Archivos duplicados (mismo contenido) → INVALID_PROPOSAL
+        dup_content = b"contenido_duplicado"
+        response = requests.post(
+            url("register-proposal"),
+            data={"callId": call_id, "title": title, "description": description},
+            files=[("files", ("a.bin", dup_content)), ("files", ("b.bin", dup_content))],
+            timeout=10,
+        )
+        assert APPLICATION_JSON in response.headers["Content-type"]
+        validate(instance=response.json(), schema=message_schema)
+        assert response.status_code == 400
+        assert response.json()["message"].startswith(messages.INVALID_PROPOSAL)
 
 
 def test_register_proposal_duplicate_files() -> None:
-    """Prueba que /register-proposal rechace listas de files con hashes duplicados."""
+    """Prueba que /register-proposal rechace archivos con contenido duplicado."""
     assert len(calls) > 0
     call_id = next(iter(calls))
-    # Dos hashes iguales → rechazado
-    dup = random_hash()
-    response = post_register_proposal(call_id, "t", "d", [dup, dup])
+    # Dos archivos con igual contenido → rechazado
+    dup_content = b"contenido_repetido"
+    response = requests.post(
+        url("register-proposal"),
+        data={"callId": call_id, "title": "t", "description": "d"},
+        files=[("files", ("a.bin", dup_content)), ("files", ("b.bin", dup_content))],
+        timeout=10,
+    )
     assert APPLICATION_JSON in response.headers["Content-type"]
     validate(instance=response.json(), schema=message_schema)
     assert response.status_code == 400
     assert response.json()["message"].startswith(messages.INVALID_PROPOSAL)
-    # Duplicado en posición no adyacente → rechazado
-    h1, h2 = random_hash(), random_hash()
-    response = post_register_proposal(call_id, "t", "d", [h1, h2, h1])
+    # Tres archivos con igual contenido → rechazado
+    response = requests.post(
+        url("register-proposal"),
+        data={"callId": call_id, "title": "t", "description": "d"},
+        files=[("files", ("a.bin", dup_content)), ("files", ("b.bin", dup_content)), ("files", ("c.bin", dup_content))],
+        timeout=10,
+    )
     assert response.status_code == 400
     assert response.json()["message"].startswith(messages.INVALID_PROPOSAL)
-    # Un solo hash repetido tres veces → rechazado
-    h = random_hash()
-    response = post_register_proposal(call_id, "t", "d", [h, h, h])
-    assert response.status_code == 400
-    assert response.json()["message"].startswith(messages.INVALID_PROPOSAL)
-    # Lista sin duplicados con varios archivos → aceptado
-    h1, h2, h3 = random_hash(), random_hash(), random_hash()
-    response = post_register_proposal(
-        call_id, f"Sin-dup-{_run_id}", f"Sin duplicados {_run_id}", [h1, h2, h3]
+    # Archivos sin duplicados → aceptado
+    response = requests.post(
+        url("register-proposal"),
+        data={"callId": call_id, "title": f"Sin-dup-{_run_id}", "description": f"Sin duplicados {_run_id}"},
+        files=[("files", ("a.bin", b"contenido_a")), ("files", ("b.bin", b"contenido_b")), ("files", ("c.bin", b"contenido_c"))],
+        timeout=10,
     )
     assert response.status_code == 201
 
@@ -2135,22 +2139,22 @@ def test_register_proposal_limits() -> None:
     assert len(calls) > 0
     call_id = next(iter(calls))
     # Título de 513 bytes → rechazado
-    response = post_register_proposal(call_id, "a" * 513, "d", [])
+    response = post_register_proposal(call_id, "a" * 513, "d")
     assert response.status_code == 400
     assert response.json()["message"] == messages.TITLE_TOO_LONG
     # Descripción de 4097 bytes → rechazada
-    response = post_register_proposal(call_id, "t", "d" * 4097, [])
+    response = post_register_proposal(call_id, "t", "d" * 4097)
     assert response.status_code == 400
     assert response.json()["message"] == messages.DESCRIPTION_TOO_LONG
     # 126 archivos (> 125) → rechazado
-    too_many = [random_hash() for _ in range(126)]
+    too_many = [b"file_" + bytes([i]) for i in range(126)]
     response = post_register_proposal(call_id, "t", "d", too_many)
     assert response.status_code == 400
     assert response.json()["message"] == messages.TOO_MANY_FILES
     # 125 archivos → aceptado (128 hojas en total)
     title = f"Max-files-{_run_id}"
     description = f"125 archivos {_run_id}"
-    max_files = [random_hash() for _ in range(125)]
+    max_files = [b"f" + bytes([i]) for i in range(125)]
     response = post_register_proposal(call_id, title, description, max_files)
     assert response.status_code == 201, f"125 files rejected: {response.json()}"
     # Todas las pruebas deben tener como máximo 7 elementos (log2(128) = 7)
@@ -2167,19 +2171,19 @@ def test_register_proposal_whitespace() -> None:
     assert len(calls) > 0
     call_id = next(iter(calls))
     # Título solo con espacios → INVALID_TITLE
-    response = post_register_proposal(call_id, "   ", "desc", [])
+    response = post_register_proposal(call_id, "   ", "desc")
     assert response.status_code == 400
     assert response.json()["message"] == messages.INVALID_TITLE
     # Título con trailing spaces → aceptado; proposalId calculado con título sin espacios
     raw_title = f"WS-prop-{_run_id}   "
     stripped_title = raw_title.rstrip()
-    response = post_register_proposal(call_id, raw_title, "desc", [])
+    response = post_register_proposal(call_id, raw_title, "desc")
     assert response.status_code == 201
     expected_id = compute_proposal_id(call_id, stripped_title, "desc", [])
     assert response.json()["proposalId"] == expected_id
     # Descripción solo con espacios → aceptado (descripción vacía es válida)
     title = f"WS-prop-desc-{_run_id}"
-    response = post_register_proposal(call_id, title, "   ", [])
+    response = post_register_proposal(call_id, title, "   ")
     assert response.status_code == 201
     expected_id = compute_proposal_id(call_id, title, "", [])
     assert response.json()["proposalId"] == expected_id
@@ -2209,7 +2213,7 @@ def test_register_proposal_no_files() -> None:
     description = f"Sin archivos adjuntos {_run_id}"
     files = []
     proposal_id = compute_proposal_id(call_id, title, description, files)
-    response = post_register_proposal(call_id, title, description, files)
+    response = post_register_proposal(call_id, title, description)
     assert APPLICATION_JSON in response.headers["Content-type"]
     assert response.status_code == 201
     validate(instance=response.json(), schema=register_proposal_schema)
@@ -2325,9 +2329,10 @@ def test_verify_proof_via_api() -> None:
     call_id = next(iter(calls))
     title = f"Verify-API-{_run_id}"
     description = f"Verificación vía API {_run_id}"
-    files = [random_hash(), random_hash(), random_hash()]
-    proposal_id = compute_proposal_id(call_id, title, description, files)
-    reg_response = post_register_proposal(call_id, title, description, files)
+    file_contents = [b"verify_content_1", b"verify_content_2", b"verify_content_3"]
+    file_hashes = [file_hash(c) for c in file_contents]
+    proposal_id = compute_proposal_id(call_id, title, description, file_hashes)
+    reg_response = post_register_proposal(call_id, title, description, file_contents)
     assert reg_response.status_code == 201
     assert reg_response.json()["proposalId"] == proposal_id
     proof = reg_response.json()["proof"]
@@ -2372,9 +2377,10 @@ def test_verify_proposal_proofs_onchain() -> None:
     call_id = next(iter(calls))
     title = f"Merkle-OZ-{_run_id}"
     description = f"Verificación on-chain {_run_id}"
-    files = [random_hash(), random_hash()]
-    proposal_id = compute_proposal_id(call_id, title, description, files)
-    response = post_register_proposal(call_id, title, description, files)
+    file_contents = [b"oz_content_1", b"oz_content_2"]
+    file_hashes = [file_hash(c) for c in file_contents]
+    proposal_id = compute_proposal_id(call_id, title, description, file_hashes)
+    response = post_register_proposal(call_id, title, description, file_contents)
     assert response.status_code == 201
     assert response.json()["proposalId"] == proposal_id
     proof = response.json()["proof"]
@@ -2615,9 +2621,9 @@ def test_deliver_call_not_closed() -> None:
     title = f"Deliver-Open-{_run_id}"
     description = f"Test not closed {_run_id}"
     file_contents = [b"file_open_1", b"file_open_2"]
-    file_hashes = ["0x" + Web3.keccak(c).hex() for c in file_contents]
+    file_hashes = [file_hash(c) for c in file_contents]
 
-    resp = post_register_proposal(call_id, title, description, file_hashes)
+    resp = post_register_proposal(call_id, title, description, file_contents)
     assert resp.status_code == 201
     proposal_id = resp.json()["proposalId"]
     proof = resp.json()["proof"]
@@ -2674,13 +2680,15 @@ def test_deliver_happy_path() -> None:
         "imagen.png": b"PNG binary data here",
     }
     file_hashes = []
+    file_contents = []
     for fname, content in file_data.items():
-        fhash = "0x" + Web3.keccak(content).hex()
+        fhash = file_hash(content)
         file_hashes.append(fhash)
+        file_contents.append(content)
 
     prop_title = f"Entrega {_run_id}"
     prop_desc = f"Entrega de archivos {_run_id}"
-    resp_reg = post_register_proposal(call_id, prop_title, prop_desc, file_hashes)
+    resp_reg = post_register_proposal(call_id, prop_title, prop_desc, file_contents)
     assert resp_reg.status_code == 201
     proposal_id = resp_reg.json()["proposalId"]
     proof = resp_reg.json()["proof"]
@@ -2757,6 +2765,7 @@ def test_get_delivery_info() -> None:
     assert "deliveredAt" in body
     assert "files" in body
     assert len(body["files"]) == len(file_data)
+    assert "callId" in body and isinstance(body["callId"], str)
 
     # Verificar que todos los archivos estén listados
     delivered_hashes = {f["hash"]: f["name"] for f in body["files"]}

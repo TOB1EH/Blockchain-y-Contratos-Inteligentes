@@ -520,6 +520,69 @@ def admin_address():
     """
     return jsonify(address=ADMIN_ADDRESS)
 
+@app.get("/calls/<call_id>/proposals")
+def call_proposals(call_id):
+    """
+    Lista las propuestas presentadas para un llamado, incluyendo sus archivos.
+    Permite al creador del llamado ver las propuestas recibidas.
+    """
+    if not is_valid_hash(call_id):
+        return err(messages.INVALID_CALLID, 400)
+
+    try:
+        call = database.get_call(call_id)
+        if not call or call["status"] != "created":
+            return err(messages.CALLID_NOT_FOUND, 404)
+
+        proposals = database.get_proposals_by_call(call_id)
+        result = []
+        for p in proposals:
+            uploads = database.get_proposal_uploads(p["proposal_id"])
+            result.append({
+                "proposalId": p["proposal_id"],
+                "title": p["title"],
+                "description": p["description"],
+                "files": [{"hash": u["file_hash"], "name": u["file_name"]} for u in uploads]
+            })
+        return jsonify(proposals=result), 200
+    except Exception:
+        return err(messages.INTERNAL_ERROR, 500)
+
+@app.get("/calls/<call_id>/deliveries")
+def call_deliveries(call_id):
+    """
+    Lista las entregas post-cierre de un llamado, incluyendo sus archivos.
+    Accesible públicamente para consultar archivos recibidos.
+    """
+    if not is_valid_hash(call_id):
+        return err(messages.INVALID_CALLID, 400)
+
+    try:
+        call = database.get_call(call_id)
+        if not call or call["status"] != "created":
+            return err(messages.CALLID_NOT_FOUND, 404)
+
+        deliveries = database.get_deliveries_by_call(call_id)
+        return jsonify(deliveries=deliveries), 200
+    except Exception:
+        return err(messages.INTERNAL_ERROR, 500)
+
+@app.get("/proposals/<proposal_id>/files/<file_hash>")
+def download_proposal_file(proposal_id, file_hash):
+    """
+    Permite descargar un archivo subido durante el registro de una propuesta.
+    """
+    if not is_valid_hash(proposal_id) or not is_valid_hash(file_hash):
+        return err(messages.INVALID_PROPOSAL, 400)
+
+    uploads = database.get_proposal_uploads(proposal_id)
+    for u in uploads:
+        if u["file_hash"].lower() == file_hash.lower():
+            if os.path.exists(u["file_path"]):
+                return send_file(u["file_path"], download_name=u["file_name"])
+
+    return err(messages.NOT_FOUND, 404)
+
 @app.get("/deliveries/<proposal_id>")
 def get_delivery_info(proposal_id):
     """Devuelve los datos de la entrega post-cierre y la lista de archivos."""
@@ -531,10 +594,13 @@ def get_delivery_info(proposal_id):
         return err(messages.NOT_DELIVERED, 404)
         
     files = database.get_proposal_files(proposal_id)
+    # Obtener prop_record para incluir call_id
+    prop_record = database.get_proposal(proposal_id)
     return jsonify({
         "sender": delivery["sender"],
         "filesRoot": delivery["files_root"],
         "deliveredAt": delivery["delivered_at"],
+        "callId": prop_record["call_id"] if prop_record else None,
         "files": [{"hash": f["file_hash"], "name": f["file_name"]} for f in files]
     }), 200
 
@@ -558,30 +624,24 @@ def download_file(proposal_id, file_hash):
 def register_proposal():
     """
     Registra una nueva propuesta para un llamado específico.
+    Acepta multipart/form-data con:
+      - callId, title, description (form fields)
+      - files (archivos adjuntos, uno o más)
     """
 
-    # Ejecuta la función de seguridad inicial de las rutas POST para
-    # asegurar que la cabecera declare JSON; bloquea si devuelve nulidad.
-    req = check_mimetype()
-    if req is None:
-        return err(messages.INVALID_MIMETYPE, 400)
+    call_id     = request.form.get("callId")
+    title       = request.form.get("title")
+    description = request.form.get("description")
+    uploaded_files = request.files.getlist("files")
 
-    # Validar que se hayan proporcionado los campos necesarios
-    call_id     = req.get("callId")
-    title       = req.get("title")
-    description = req.get("description")
-    files       = req.get("files")
-    # proposal    = req.get("proposal")
-    if call_id is None or title is None or description is None or files is None:
+    if call_id is None or title is None or description is None:
         return err(messages.MISSING_FIELD, 400)
     if not is_valid_hash(call_id):
         return err(messages.INVALID_CALLID, 400)
 
-    # Normalizar y validar titulo y descripcion
     title       = title.rstrip()
     description = description.rstrip()
 
-    # Validaciones de formato y longitud para titulo, descripcion y archivos adjuntos
     if not title:
         return err(messages.INVALID_TITLE, 400)
     if len(title.encode("utf-8")) > 512:
@@ -589,18 +649,26 @@ def register_proposal():
     if len(description.encode("utf-8")) > 4096:
         return err(messages.DESCRIPTION_TOO_LONG, 400)
 
-    if not isinstance(files, list):
-        return err(messages.INVALID_PROPOSAL, 400)
-    if len(files) > 125:
+    # Calcular hashes de los archivos subidos
+    file_hashes = []
+    file_records = []
+    for f in uploaded_files:
+        content = f.read()
+        f.seek(0)
+        f_hash = "0x" + Web3.keccak(content).hex()
+        file_hashes.append(f_hash)
+        file_records.append({
+            "hash": f_hash,
+            "name": secure_filename(f.filename or "archivo"),
+            "content": content
+        })
+
+    if len(file_hashes) > 125:
         return err(messages.TOO_MANY_FILES, 400)
-    for f in files:
-        if not is_valid_hash(f):
-            return err(messages.INVALID_PROPOSAL, 400)
-    if len(files) != len(set(h.lower() for h in files)):
+    if len(file_hashes) != len(set(h.lower() for h in file_hashes)):
         return err(messages.INVALID_PROPOSAL, 400)
 
     try:
-        # Encontrar el contrato CFP correspondiente al callId proporcionado
         cfp = get_cfp_contract(call_id)
     except ValueError:
         return err(messages.CALLID_NOT_FOUND, 404)
@@ -608,18 +676,14 @@ def register_proposal():
         return err(messages.INTERNAL_ERROR, 500)
 
     try:
-        # Calcular el proposalId a partir del callId, titulo, descripcion y archivos adjuntos
-        # Lo obtiene del arbol Merkle construido con esos datos, para asegurar que el
-        # proposalId sea unico y que no se puedan registrar propuestas con datos falsificados
-        proposal_id    = merkle.compute_proposal_id(call_id, title, description, files)
+        proposal_id    = merkle.compute_proposal_id(call_id, title, description, file_hashes)
         proposal_bytes = bytes.fromhex(proposal_id[2:])
 
-        # Verificar que la propuesta no existe ya
         data = cfp.functions.proposalData(proposal_bytes).call()
         if data[0] != ZERO:
             return err(messages.ALREADY_REGISTERED, 403)
 
-        proofs = merkle.compute_proposal_proofs(call_id, title, description, files)
+        proofs = merkle.compute_proposal_proofs(call_id, title, description, file_hashes)
 
         send_transaction(
             cfp_factory.functions.registerProposal(
@@ -627,6 +691,15 @@ def register_proposal():
             )
         )
         database.insert_proposal(proposal_id, call_id, title, description, proofs)
+
+        # Guardar archivos en disco y en DB
+        prop_dir = os.path.join(UPLOAD_FOLDER, proposal_id)
+        os.makedirs(prop_dir, exist_ok=True)
+        for fr in file_records:
+            path = os.path.join(prop_dir, fr["name"])
+            with open(path, "wb") as out_file:
+                out_file.write(fr["content"])
+            database.insert_proposal_upload(proposal_id, fr["hash"], fr["name"], path)
 
         return jsonify(
             message=messages.OK,
@@ -987,7 +1060,7 @@ def deliver_files():
     files_root_hex = "0x" + root.hex()
     # 8. Transacción on-chain (La API paga el Gas con su server_account)
     try:
-        send_transaction(
+        tx_receipt = send_transaction(
             cfp.functions.registerDelivery(
                 proposal_bytes, 
                 bytes.fromhex(files_root_hex[2:])
@@ -1008,7 +1081,9 @@ def deliver_files():
     return jsonify({
         "message": messages.OK,
         "filesRoot": files_root_hex,
-        "proposalId": proposal_id
+        "proposalId": proposal_id,
+        "txHash": Web3.to_hex(tx_receipt["transactionHash"]),
+        "blockNumber": tx_receipt["blockNumber"]
     }), 201
 
 @app.patch("/registrations/<address>")

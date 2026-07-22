@@ -8,6 +8,7 @@ const physicalFiles = ref([])
 const msg = ref('')
 const loading = ref(false)
 const deliverySuccess = ref(false)
+const deliveryReceipt = ref(null)
 
 function handleReceiptChange(event) {
   receiptFile.value = event.target.files[0]
@@ -34,6 +35,7 @@ async function deliverFiles() {
     })
     const res = await api.postDeliver(formData)
     if (res.status === 201) {
+      deliveryReceipt.value = res.data
       msg.value = '¡Archivos entregados y registrados en la blockchain con éxito!'
       deliverySuccess.value = true
     } else {
@@ -44,6 +46,17 @@ async function deliverFiles() {
   } finally {
     loading.value = false
   }
+}
+
+function downloadDeliveryReceipt() {
+  if (!deliveryReceipt.value) return
+  const blob = new Blob([JSON.stringify(deliveryReceipt.value, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `delivery-receipt-${deliveryReceipt.value.proposalId}.json`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 </script>
 <template>
@@ -72,8 +85,17 @@ async function deliverFiles() {
     
     <div v-else class="success-box">
       <h4>¡Entrega Validada y Sellada!</h4>
-      <p>La API confirmó matemáticamente que tus archivos son idénticos a los comprometidos inicialmente y registró un comprobante criptográfico (filesRoot) en el contrato inteligente del llamado.</p>
-      <p>Tus archivos ya son públicos.</p>
+      <p>La API confirmó matemáticamente que tus archivos son idénticos a los comprometidos inicialmente y registró un comprobante criptográfico en el contrato inteligente del llamado.</p>
+      <ul v-if="deliveryReceipt">
+        <li><strong>ID Propuesta:</strong> {{ deliveryReceipt.proposalId }}</li>
+        <li><strong>FilesRoot:</strong> {{ deliveryReceipt.filesRoot }}</li>
+        <li><strong>TxHash:</strong> {{ deliveryReceipt.txHash }}</li>
+        <li><strong>Bloque:</strong> {{ deliveryReceipt.blockNumber }}</li>
+      </ul>
+      <p style="margin-top: 10px;">Tus archivos ya son públicos.</p>
+      <button @click="downloadDeliveryReceipt" style="margin-top: 10px;">
+        Descargar Recibo de Entrega
+      </button>
     </div>
   </div>
 </template>

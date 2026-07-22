@@ -13,7 +13,8 @@ const loading = ref(false)
 
 // ABIs para verificar on-chain
 const CFP_ABI = [
-  'function proposalData(bytes32 proposal) view returns (tuple(address sender, uint256 blockNumber, uint256 timestamp))'
+  'function proposalData(bytes32 proposal) view returns (tuple(address sender, uint256 blockNumber, uint256 timestamp))',
+  'function deliveryData(bytes32 proposal) view returns (tuple(address sender, uint256 blockNumber, uint256 timestamp, bytes32 filesRoot, bool delivered))'
 ]
 
 const FACTORY_ABI = [
@@ -38,42 +39,76 @@ async function verifyReceipt() {
     // 1. Leer el archivo JSON localmente
     const text = await receiptFile.value.text()
     const receipt = JSON.parse(text)
-    if (!receipt.proposalId || !receipt.callId || !receipt.proof) {
-      throw new Error("El archivo no tiene un formato de recibo válido.")
+
+    // Detectar tipo de recibo: proposal (con proof) o delivery (con txHash/filesRoot)
+    const isDeliveryReceipt = receipt.txHash && receipt.filesRoot && !receipt.proof
+    const isProposalReceipt = receipt.proposalId && receipt.callId && receipt.proof
+
+    if (!isProposalReceipt && !isDeliveryReceipt) {
+      throw new Error("El archivo no tiene un formato de recibo válido (proposal o delivery).")
     }
-    // 2. Verificación Matemática contra la API
-    // Tomamos la primera hoja del árbol para hacer la prueba
-    const leaves = Object.keys(receipt.proof)
-    if (leaves.length === 0) throw new Error("El recibo no contiene pruebas de Merkle.")
-    
-    const testLeaf = leaves[0]
-    const testProof = receipt.proof[testLeaf]
-    const apiRes = await api.postVerifyProof(receipt.proposalId, testLeaf, testProof)
-    if (apiRes.status !== 200 || !apiRes.data.valid) {
-      throw new Error("La validación matemática falló. El recibo está alterado o es falso.")
+
+    if (isProposalReceipt) {
+      // 2a. Verificación Matemática contra la API
+      const leaves = Object.keys(receipt.proof)
+      if (leaves.length === 0) throw new Error("El recibo no contiene pruebas de Merkle.")
+      
+      const testLeaf = leaves[0]
+      const testProof = receipt.proof[testLeaf]
+      const apiRes = await api.postVerifyProof(receipt.proposalId, testLeaf, testProof)
+      if (apiRes.status !== 200 || !apiRes.data.valid) {
+        throw new Error("La validación matemática falló. El recibo está alterado o es falso.")
+      }
     }
+
     // 3. Verificación On-Chain
     let onChainStatus = "No verificable sin MetaMask conectado"
     if (signer.value) {
       const addrRes = await api.getContractAddress()
       const factory = new Contract(addrRes.data.address, FACTORY_ABI, signer.value)
       
-      const callData = await factory.calls(receipt.callId)
+      // Obtener callId del recibo (proposal lo tiene, delivery no)
+      let callId = receipt.callId
+      if (!callId) {
+        const propInfo = await api.getDeliveryInfo(receipt.proposalId)
+        if (propInfo.status !== 200) {
+          throw new Error("No se pudo encontrar la propuesta asociada al recibo de entrega.")
+        }
+        callId = propInfo.data.callId
+        if (!callId) {
+          throw new Error("No se pudo determinar el callId de la propuesta.")
+        }
+      }
+
+      const callData = await factory.calls(callId)
       if (callData.cfp === '0x0000000000000000000000000000000000000000') {
         throw new Error("El llamado asociado a este recibo no existe en la blockchain.")
       }
       const cfp = new Contract(callData.cfp, CFP_ABI, signer.value)
-      const propData = await cfp.proposalData(receipt.proposalId)
-      if (propData.blockNumber > 0n) {
-        onChainStatus = `Confirmado inmutable en el Bloque #${propData.blockNumber.toString()}`
+      
+      if (isDeliveryReceipt) {
+        // Verificar entrega post-cierre
+        const delData = await cfp.deliveryData(receipt.proposalId)
+        if (delData.delivered) {
+          onChainStatus = `Archivos recibidos en el Bloque #${delData.blockNumber.toString()}. FilesRoot: ${delData.filesRoot}`
+        } else {
+          throw new Error("La entrega NO está registrada en la blockchain.")
+        }
       } else {
-        throw new Error("Alerta: La propuesta NO está registrada en la blockchain.")
+        // Verificar propuesta
+        const propData = await cfp.proposalData(receipt.proposalId)
+        if (propData.blockNumber > 0n) {
+          onChainStatus = `Confirmado inmutable en el Bloque #${propData.blockNumber.toString()}`
+        } else {
+          throw new Error("Alerta: La propuesta NO está registrada en la blockchain.")
+        }
       }
     }
     verificationResult.value = {
       proposalId: receipt.proposalId,
-      callId: receipt.callId,
-      onChainStatus
+      callId: receipt.callId || 'No disponible',
+      onChainStatus,
+      type: isDeliveryReceipt ? 'delivery' : 'proposal'
     }
   } catch (err) {
     errorMsg.value = err.message
@@ -98,11 +133,11 @@ async function verifyReceipt() {
       {{ errorMsg }}
     </div>
     <div v-if="verificationResult" class="success-box">
-      <h4>Recibo Válido y Auténtico</h4>
+      <h4>{{ verificationResult.type === 'delivery' ? 'Recibo de Entrega Válido' : 'Recibo Válido y Auténtico' }}</h4>
       <ul>
         <li><strong>ID Propuesta:</strong> {{ verificationResult.proposalId }}</li>
         <li><strong>Llamado:</strong> {{ verificationResult.callId }}</li>
-        <li><strong>Prueba de Merkle:</strong> Válida (Verificada por la API)</li>
+        <li v-if="verificationResult.type === 'proposal'"><strong>Prueba de Merkle:</strong> Válida (Verificada por la API)</li>
         <li><strong>Estado en Blockchain:</strong> {{ verificationResult.onChainStatus }}</li>
       </ul>
     </div>

@@ -82,6 +82,14 @@ def init_db():
                 file_path   TEXT NOT NULL,
                 FOREIGN KEY(proposal_id) REFERENCES deliveries(proposal_id)
             );
+            CREATE TABLE IF NOT EXISTS proposal_uploads (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                proposal_id TEXT NOT NULL,
+                file_hash   TEXT NOT NULL,
+                file_name   TEXT NOT NULL,
+                file_path   TEXT NOT NULL,
+                FOREIGN KEY(proposal_id) REFERENCES proposals(proposal_id)
+            );
         """)
 
         # Garantizar que exista exactamente una fila en admin_state
@@ -191,7 +199,7 @@ def update_call_created(call_id: str, creator: str, cfp_address: str) -> None:
             SET status = 'created', creator = ?, cfp_address = ?
             WHERE call_id = ?
             """,
-            (creator, cfp_address, call_id.lower())
+            (creator.lower(), cfp_address, call_id.lower())
         )
 
 def get_proposal(proposal_id: str) -> dict | None:
@@ -279,3 +287,55 @@ def get_proposal_files(proposal_id: str) -> list:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+def insert_proposal_upload(proposal_id: str, file_hash: str, file_name: str, file_path: str) -> None:
+    with transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO proposal_uploads (proposal_id, file_hash, file_name, file_path)
+            VALUES (?, ?, ?, ?)
+            """,
+            (proposal_id.lower(), file_hash.lower(), file_name, file_path)
+        )
+
+def get_proposal_uploads(proposal_id: str) -> list:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT file_hash, file_name, file_path FROM proposal_uploads WHERE proposal_id = ?",
+        (proposal_id.lower(),)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_proposals_by_call(call_id: str) -> list:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT proposal_id, title, description FROM proposals WHERE call_id = ? ORDER BY proposal_id",
+        (call_id.lower(),)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_deliveries_by_call(call_id: str) -> list:
+    """Devuelve todas las entregas post-cierre de un llamado, con sus archivos."""
+    conn = get_connection()
+    rows = conn.execute(
+        """
+        SELECT d.proposal_id, d.sender, d.files_root, d.delivered_at
+        FROM deliveries d
+        WHERE d.call_id = ?
+        ORDER BY d.delivered_at
+        """,
+        (call_id.lower(),)
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        files = conn.execute(
+            "SELECT file_hash, file_name FROM proposal_files WHERE proposal_id = ?",
+            (d["proposal_id"],)
+        ).fetchall()
+        d["files"] = [dict(f) for f in files]
+        result.append(d)
+    conn.close()
+    return result

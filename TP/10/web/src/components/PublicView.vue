@@ -17,7 +17,8 @@ const showVerifier = ref(false)
 const activeCallId = ref(null)
 const activeAction = ref(null) // 'submit', 'deliver', 'files'
 const callClosingTimes = ref({})
-const callFiles = ref({}) // Almacena archivos descargables por proposalId
+const callDeliveries = ref({}) // Almacena entregas visibles publicamente
+const loadingDeliveries = ref({})
 
 onMounted(async () => {
   const [cr, cl] = await Promise.all([
@@ -62,32 +63,25 @@ function openAction(callId, action) {
   activeCallId.value = activeCallId.value === callId && activeAction.value === action ? null : callId
   activeAction.value = activeCallId.value ? action : null
   
-  if (action === 'files') {
-    loadFilesForCall(callId)
+  if (action === 'deliveries') {
+    loadCallDeliveries(callId)
   }
 }
 
-// Nota: en una app real habría un endpoint para buscar deliveries por call_id. 
-// Aquí lo simulamos requiriendo que el usuario ingrese el proposal_id para ver los archivos.
-const searchProposalId = ref('')
-const filesLoadMsg = ref('')
-async function loadFilesForCall() {
-  if (!searchProposalId.value) return
-  filesLoadMsg.value = 'Buscando archivos...'
-  callFiles.value = {}
+// Cargar entregas publicas de un llamado cerrado
+async function loadCallDeliveries(callId) {
+  if (callDeliveries.value[callId]) return
+  loadingDeliveries.value = { ...loadingDeliveries.value, [callId]: true }
   try {
-    const res = await api.getDeliveryInfo(searchProposalId.value)
-    if (res.status === 200) {
-      callFiles.value[searchProposalId.value] = res.data.files
-      filesLoadMsg.value = 'Archivos encontrados:'
-    } else {
-      filesLoadMsg.value = 'No se encontró entrega para este ID o aún no se han subido archivos.'
-    }
+    const res = await api.getCallDeliveries(callId)
+    callDeliveries.value = { ...callDeliveries.value, [callId]: res.data.deliveries || [] }
   } catch (e) {
-    filesLoadMsg.value = 'Error al buscar archivos.'
+    console.error(e)
+  } finally {
+    loadingDeliveries.value = { ...loadingDeliveries.value, [callId]: false }
   }
 }
-function getDownloadUrl(proposalId, fileHash) {
+function getDeliveryDownloadUrl(proposalId, fileHash) {
   return `/api/deliveries/${proposalId}/files/${fileHash}`
 }
 </script>
@@ -146,8 +140,8 @@ function getDownloadUrl(proposalId, fileHash) {
               <button v-else @click="openAction(cl.call_id, 'deliver')" class="btn-secondary">
                 Entregar Archivos
               </button>
-              <button v-if="!isCallOpen(cl.call_id)" @click="openAction(cl.call_id, 'files')" class="btn-outline">
-                Ver Archivos
+              <button v-if="!isCallOpen(cl.call_id)" @click="openAction(cl.call_id, 'deliveries')" class="btn-outline">
+                Ver Entregas
               </button>
             </div>
           </div>
@@ -157,21 +151,35 @@ function getDownloadUrl(proposalId, fileHash) {
           <ProposalSubmit v-if="activeAction === 'submit'" :callId="cl.call_id" />
           
           <PostClosingDelivery v-if="activeAction === 'deliver'" />
-          <div v-if="activeAction === 'files'" class="files-panel">
-            <h4>Archivos Públicos</h4>
-            <p>Ingresa el ID de la propuesta (proposalId) para descargar sus archivos:</p>
-            <input v-model="searchProposalId" placeholder="0x..." style="width: 300px;" />
-            <button @click="loadFilesForCall">Buscar</button>
-            <p>{{ filesLoadMsg }}</p>
-            <ul v-if="callFiles[searchProposalId]">
-              <li v-for="file in callFiles[searchProposalId]" :key="file.hash">
-                <a :href="getDownloadUrl(searchProposalId, file.hash)" download target="_blank">
-                  📄 {{ file.name }}
-                </a>
-                <br>
-                <small>Hash: {{ file.hash }}</small>
-              </li>
-            </ul>
+          <div v-if="activeAction === 'deliveries'" class="deliveries-panel">
+            <h4>Archivos recibidos (post-cierre)</h4>
+            <div v-if="loadingDeliveries[cl.call_id]"><p>Cargando entregas...</p></div>
+            <div v-else-if="callDeliveries[cl.call_id] && callDeliveries[cl.call_id].length">
+              <div v-for="del in callDeliveries[cl.call_id]" :key="del.proposal_id" class="public-proposal-card">
+                <div class="public-proposal-header">
+                  <strong>Propuesta {{ del.proposal_id.slice(0, 18) }}...</strong>
+                  <span class="delivery-date">Entregado: {{ del.delivered_at }}</span>
+                </div>
+                <p><strong>Sender:</strong> <code>{{ del.sender }}</code></p>
+                <p><strong>Files Root:</strong> <code>{{ del.files_root }}</code></p>
+                <div v-if="del.files && del.files.length" class="public-proposal-files">
+                  <strong>Archivos:</strong>
+                  <ul class="public-file-list">
+                    <li v-for="file in del.files" :key="file.file_hash" class="public-file-item">
+                      <a :href="getDeliveryDownloadUrl(del.proposal_id, file.file_hash)" download target="_blank" class="public-file-link">
+                        <span class="file-icon">&#128206;</span>
+                        {{ file.file_name }}
+                      </a>
+                      <span class="file-hash-label">{{ file.file_hash.slice(0, 18) }}...</span>
+                    </li>
+                  </ul>
+                </div>
+                <div v-else class="public-proposal-no-files">Sin archivos adjuntos.</div>
+              </div>
+            </div>
+            <div v-else>
+              <p>No hay entregas para este llamado.</p>
+            </div>
           </div>
         </div>
       </div>
@@ -222,11 +230,88 @@ function getDownloadUrl(proposalId, fileHash) {
   padding-top: var(--spacing-md);
 }
 
-.files-panel {
+.deliveries-panel {
+  margin-top: 10px;
+}
+
+.delivery-date {
+  font-size: 0.8em;
+  color: #888;
+}
+
+.public-proposal-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 10px;
   background: #fafafa;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: var(--spacing-md);
-  margin-top: var(--spacing-sm);
+}
+
+.public-proposal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.proposal-id-label {
+  font-size: 0.75em;
+  color: #999;
+  font-family: monospace;
+}
+
+.public-proposal-desc {
+  margin: 4px 0 8px;
+  font-size: 0.9em;
+  color: #555;
+}
+
+.public-proposal-files {
+  margin-top: 6px;
+}
+
+.public-file-list {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+}
+
+.public-file-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  background: #fff;
+  border: 1px solid #eee;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.public-file-link {
+  text-decoration: none;
+  color: #1976d2;
+  font-weight: 500;
+  font-size: 0.9em;
+}
+
+.public-file-link:hover {
+  text-decoration: underline;
+}
+
+.file-icon {
+  margin-right: 4px;
+}
+
+.file-hash-label {
+  font-size: 0.75em;
+  color: #aaa;
+  font-family: monospace;
+}
+
+.public-proposal-no-files {
+  font-size: 0.85em;
+  color: #999;
+  font-style: italic;
+  margin-top: 4px;
 }
 </style>

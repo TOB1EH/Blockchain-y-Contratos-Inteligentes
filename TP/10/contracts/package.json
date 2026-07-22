@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "test": "hardhat test",
-    "deploy": "hardhat compile && node scripts/deploy.js"
+    "node": "hardhat node",
+    "deploy": "hardhat compile && node scripts/deploy.js",
+    "fund": "node scripts/fund.js \"odor tuition process ancient private piano rule noise crazy tomorrow depend nasty\""
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-ethers": "^4.0.8",

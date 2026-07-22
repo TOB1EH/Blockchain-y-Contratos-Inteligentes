@@ -1,6 +1,5 @@
 <script setup>
 import { ref } from 'vue'
-import { keccak256 } from 'ethers'
 import { useApi } from '../composables/useApi.js'
 
 const props = defineProps({
@@ -18,23 +17,8 @@ const msg = ref('')
 const loading = ref(false)
 const receiptGenerated = ref(null)
 
-// Manejar selección de archivos
 function handleFileChange(event) {
   files.value = Array.from(event.target.files)
-}
-
-// Calcular hash de un archivo localmente usando FileReader y keccak256
-function computeFileHash(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const buffer = new Uint8Array(e.target.result)
-      const hash = keccak256(buffer)
-      resolve(hash)
-    }
-    reader.onerror = (e) => reject(e)
-    reader.readAsArrayBuffer(file)
-  })
 }
 
 async function submitProposal() {
@@ -43,18 +27,20 @@ async function submitProposal() {
     return
   }
   loading.value = true
-  msg.value = 'Calculando hashes localmente (tus archivos no se envían al servidor)...'
+  msg.value = 'Enviando archivos al servidor...'
   try {
-    // 1. Calcular hashes de todos los archivos seleccionados
-    const fileHashes = await Promise.all(files.value.map(f => computeFileHash(f)))
+    const formData = new FormData()
+    formData.append('callId', props.callId)
+    formData.append('title', title.value)
+    formData.append('description', description.value)
+    for (const f of files.value) {
+      formData.append('files', f)
+    }
     
-    msg.value = 'Hashes calculados. Generando compromiso on-chain a través de la API...'
-    // 2. Enviar título, descripción y HASHES a la API
-    const res = await api.postRegisterProposal(props.callId, title.value, description.value, fileHashes)
+    const res = await api.postRegisterProposal(formData)
     if (res.status === 201) {
       msg.value = '¡Propuesta registrada con éxito! Descargando tu recibo...'
       
-      // 3. Preparar el recibo (JSON) para descargar
       const receiptData = {
         callId: props.callId,
         proposalId: res.data.proposalId,
@@ -74,7 +60,6 @@ async function submitProposal() {
   }
 }
 
-// Forzar descarga del JSON
 function downloadReceipt(receiptObj) {
   const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(receiptObj, null, 2))
   const downloadAnchorNode = document.createElement('a')
@@ -88,7 +73,7 @@ function downloadReceipt(receiptObj) {
 <template>
   <div class="proposal-box">
     <h3>Presentar Propuesta (Anónimo)</h3>
-    <p>Esta acción es anónima y no requiere MetaMask. Los archivos originales permanecerán en tu computadora hasta que la convocatoria cierre.</p>
+    <p>Esta acción es anónima y no requiere MetaMask. Tus archivos se almacenan de forma segura en el servidor hasta que la convocatoria cierre.</p>
     
     <div v-if="!receiptGenerated">
       <div>

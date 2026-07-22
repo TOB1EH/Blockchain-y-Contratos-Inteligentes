@@ -527,6 +527,8 @@ El campo `:proposal` ahora es la raíz del árbol de Merkle devuelta por `POST /
     * `message`: valor OK.
     * `filesRoot`: raíz del árbol de Merkle de los archivos entregados (`0x…`).
     * `proposalId`: identificador de la propuesta entregada.
+    * `txHash`: hash de la transacción on-chain de `registerDelivery()` (`0x…`).
+    * `blockNumber`: número de bloque en el que se minó la transacción.
 * Retorno fallido:
 
   | Causa                              | Código | Mensaje              |
@@ -552,6 +554,7 @@ El campo `:proposal` ahora es la raíz del árbol de Merkle devuelta por `POST /
     * `sender`: dirección que registró la entrega (cuenta del servidor).
     * `filesRoot`: raíz del árbol de Merkle de los archivos entregados.
     * `deliveredAt`: fecha y hora de la entrega en formato ISO 8601.
+    * `callId`: hash del llamado asociado a la propuesta entregada.
     * `files`: lista de objetos con `hash` y `name` para cada archivo.
 * Retorno fallido:
 
@@ -560,6 +563,25 @@ El campo `:proposal` ahora es la raíz del árbol de Merkle devuelta por `POST /
   | proposalId mal formado   | 400    | INVALID_PROPOSAL    |
   | entrega no registrada     | 404    | NOT_DELIVERED       |
   | desconocida               | 500    | INTERNAL_ERROR      |
+
+#### `GET /calls/<call_id>/deliveries`
+
+* Devuelve la lista de entregas post-cierre para un llamado. Cada entrega contiene los datos de la propuesta entregada y la lista de archivos disponibles para descarga pública.
+* Método: `GET`
+* Argumento: `:call_id` es el hash que identifica al llamado.
+* Retorno exitoso:
+  * Código HTTP: 200
+  * Cuerpo: Un objeto JSON con un campo `deliveries` que contiene una lista de objetos con:
+    * `proposalId`: identificador de la propuesta entregada.
+    * `filesRoot`: raíz del árbol de Merkle de los archivos entregados.
+    * `deliveredAt`: fecha y hora de la entrega en formato ISO 8601.
+    * `files`: lista de objetos con `hash` y `name` para cada archivo.
+* Retorno fallido:
+
+  | Causa              | Código | Mensaje             |
+  |--------------------|--------|---------------------|
+  | callId mal formado | 400    | INVALID_CALLID      |
+  | desconocida        | 500    | INTERNAL_ERROR      |
 
 #### `GET /deliveries/<proposal_id>/files/<file_hash>`
 
@@ -655,6 +677,17 @@ Almacena los registros de entrega post-cierre vía `POST /deliver`.
 | `sender`      | TEXT    | Dirección que registró la entrega                |
 | `files_root`  | TEXT    | Raíz del árbol de Merkle de los archivos         |
 | `delivered_at`| DATETIME | Fecha y hora de la entrega                      |
+
+### Tabla `proposal_uploads`
+
+Almacena los archivos subidos durante el registro de propuestas (`POST /register-proposal`). La API retiene estos archivos temporalmente para calcular sus hashes; no se descargan públicamente hasta la entrega post-cierre.
+
+| Campo         | Tipo    | Descripción                                      |
+|---------------|---------|--------------------------------------------------|
+| `id`          | INTEGER PK | Identificador autoincremental                  |
+| `proposal_id` | TEXT FK | Hash de la propuesta                            |
+| `file_hash`   | TEXT    | Hash keccak256 del archivo                      |
+| `file_name`   | TEXT    | Nombre original del archivo                     |
 
 ### Tabla `proposal_files`
 

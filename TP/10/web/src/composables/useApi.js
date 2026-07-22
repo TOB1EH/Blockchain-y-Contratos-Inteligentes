@@ -39,9 +39,9 @@ export function useApi() {
       apiFetch('/create', { method: 'POST', body: JSON.stringify({ callId, signature, title, description }) }),
     // --- NUEVOS ENDPOINTS PARA ETAPA 3 ---
     
-    // Presentar propuesta (envía solo los hashes)
-    postRegisterProposal: (callId, title, description, files) =>
-      apiFetch('/register-proposal', { method: 'POST', body: JSON.stringify({ callId, title, description, files }) }),
+    // Presentar propuesta (envía FormData con archivos reales)
+    postRegisterProposal: (formData) =>
+      apiFetch('/register-proposal', { method: 'POST', body: formData }),
     
     // Verificar prueba de Merkle de una propuesta
     postVerifyProof: (proposalId, leaf, proof) =>
@@ -51,6 +51,14 @@ export function useApi() {
     postDeliver: (formData) =>
       apiFetch('/deliver', { method: 'POST', body: formData }),
       
+    // Consultar propuestas de un llamado
+    getCallProposals: (callId) =>
+      apiFetch(`/calls/${callId}/proposals`),
+      
+    // Consultar entregas post-cierre de un llamado
+    getCallDeliveries: (callId) =>
+      apiFetch(`/calls/${callId}/deliveries`),
+
     // Consultar datos de entrega y lista de archivos
     getDeliveryInfo: (proposalId) =>
       apiFetch(`/deliveries/${proposalId}`)
