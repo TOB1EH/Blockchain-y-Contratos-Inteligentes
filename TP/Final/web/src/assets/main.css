@@ -1,0 +1,353 @@
+/* === Variables Globales === */
+:root {
+  --color-primary: #1976d2;
+  --color-primary-dark: #1565c0;
+  --color-success: #2e7d32;
+  --color-success-light: #e8f5e9;
+  --color-warning: #ef6c00;
+  --color-warning-light: #fff3e0;
+  --color-danger: #d32f2f;
+  --color-danger-light: #ffebee;
+  --color-info: #1976d2;
+  --color-info-light: #e3f2fd;
+  --color-bg: #f5f5f5;
+  --color-surface: #ffffff;
+  --color-border: #e0e0e0;
+  --color-text: #212121;
+  --color-text-secondary: #616161;
+  --color-text-muted: #9e9e9e;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.1);
+  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --max-width: 960px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+}
+
+/* === Reset Base === */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+#app {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: var(--spacing-lg);
+}
+
+h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 var(--spacing-md);
+  color: var(--color-text);
+}
+
+h2 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin: 0 0 var(--spacing-md);
+  color: var(--color-text);
+}
+
+h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 var(--spacing-sm);
+  color: var(--color-text);
+}
+
+h4 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 var(--spacing-xs);
+}
+
+p {
+  margin: 0 0 var(--spacing-sm);
+  color: var(--color-text-secondary);
+}
+
+small {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: var(--spacing-md) 0;
+}
+
+/* === Botones Base === */
+button {
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+button:hover {
+  background: #f0f0f0;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* === Inputs y Textareas === */
+input[type="text"],
+input[type="number"],
+textarea {
+  font-family: var(--font-family);
+  font-size: 0.85rem;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  width: 100%;
+  max-width: 400px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+input[type="file"] {
+  font-size: 0.85rem;
+}
+
+label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-bottom: var(--spacing-xs);
+  color: var(--color-text-secondary);
+}
+
+/* === Tablas === */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+th, td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+th {
+  background: #fafafa;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+tr:hover td {
+  background: #fafafa;
+}
+
+/* === Cards/Section Boxes === */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  box-shadow: var(--shadow-sm);
+}
+
+/* === Badges === */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge-open {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.badge-closed {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+/* === Mensajes de Feedback === */
+.feedback {
+  font-weight: 600;
+  margin-top: var(--spacing-sm);
+  color: var(--color-text);
+}
+
+/* === Success Box === */
+.success-box {
+  background: var(--color-success-light);
+  border: 1px solid #c8e6c9;
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-top: var(--spacing-sm);
+}
+
+.success-box h4 {
+  color: var(--color-success);
+  margin-bottom: var(--spacing-sm);
+}
+
+/* === Error Box === */
+.error-msg {
+  color: var(--color-danger);
+  font-weight: 600;
+  margin-top: var(--spacing-sm);
+}
+
+/* === Nav Bar === */
+.nav-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) 0;
+  flex-wrap: wrap;
+}
+
+.nav-bar button {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+}
+
+.nav-bar button:hover {
+  background: var(--color-info-light);
+  color: var(--color-primary);
+}
+
+.nav-bar .nav-active {
+  background: var(--color-primary);
+  color: white;
+}
+
+.nav-bar .nav-active:hover {
+  background: var(--color-primary-dark);
+  color: white;
+}
+
+.nav-wallet {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.nav-wallet .wallet-address {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  font-family: monospace;
+}
+
+.nav-wallet .network-error {
+  color: var(--color-danger);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.nav-wallet .wallet-error {
+  color: var(--color-danger);
+  font-size: 0.8rem;
+  margin-top: var(--spacing-xs);
+}
+
+.desc {
+  color: var(--color-text-secondary);
+  margin: var(--spacing-xs) 0 var(--spacing-sm);
+}
+
+.selected {
+  background: var(--color-info-light) !important;
+}
+
+/* === Botones de Accion === */
+.btn-primary {
+  background: var(--color-success);
+  color: white;
+  border-color: var(--color-success);
+}
+
+.btn-primary:hover {
+  background: #1b5e20;
+  border-color: #1b5e20;
+}
+
+.btn-secondary {
+  background: var(--color-warning);
+  color: white;
+  border-color: var(--color-warning);
+}
+
+.btn-secondary:hover {
+  background: #e65100;
+  border-color: #e65100;
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.btn-outline:hover {
+  background: #f5f5f5;
+}
+
+.btn-verify {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+  padding: 10px 20px;
+  font-size: 1rem;
+}
+
+.btn-verify:hover {
+  background: var(--color-primary-dark);
+  border-color: var(--color-primary-dark);
+}
