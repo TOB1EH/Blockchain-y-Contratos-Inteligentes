@@ -11,14 +11,12 @@ export default defineConfig({
     hardhatMocha,
     hardhatNetworkHelpers,
   ],
-  solidity: "0.8.19",
-  // Configurar minería automática con intervalo para simular el paso del tiempo en pruebas que dependen de timestamps
-  // networks: {
-  //   hardhat: {
-  //     mining: {
-  //       auto: true,
-  //       interval: 3000
-  //     }
-  //   }
-  // }
+  solidity: "0.8.28",
+  networks: {
+    localhost: {
+      type: "http",
+      chainType: "l1",
+      url: "http://127.0.0.1:8545",
+    },
+  },
 });

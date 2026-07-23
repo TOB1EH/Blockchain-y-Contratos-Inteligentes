@@ -1,9 +1,15 @@
 {
-  "address": "0xCF131F48f28dCa4d83b9e1cc6382CC31835Bd34B",
+  "address": "0x8310e0Aa4E95d11A0C3611c941030EbA6155182f",
   "chainId": 31337,
   "abi": [
     {
-      "inputs": [],
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "token_",
+          "type": "address"
+        }
+      ],
       "stateMutability": "nonpayable",
       "type": "constructor"
     },
@@ -27,6 +33,12 @@
           "internalType": "contract CFP",
           "name": "cfp",
           "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "guaranteeAmount",
+          "type": "uint256"
         }
       ],
       "name": "CFPCreated",
@@ -105,6 +117,11 @@
               "internalType": "contract CFP",
               "name": "cfp",
               "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "guaranteeAmount",
+              "type": "uint256"
             }
           ],
           "internalType": "struct CFPFactory.CallForProposals",
@@ -125,6 +142,11 @@
         {
           "internalType": "uint256",
           "name": "timestamp",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "guaranteeAmount",
           "type": "uint256"
         }
       ],
@@ -155,6 +177,11 @@
           "internalType": "address",
           "name": "creator",
           "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "guaranteeAmount",
+          "type": "uint256"
         }
       ],
       "name": "createFor",
@@ -362,6 +389,19 @@
       "name": "registerProposal",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "token",
+      "outputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
