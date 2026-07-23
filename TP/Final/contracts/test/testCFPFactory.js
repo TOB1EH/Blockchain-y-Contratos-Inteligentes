@@ -18,7 +18,7 @@ describe("CFP Factory", function () {
 
     before(async function () {
       const Factory = await ethers.getContractFactory("CFPFactory");
-      factory = await Factory.deploy();
+      factory = await Factory.deploy(ethers.ZeroAddress);
     });
 
     it("debe tener el dueño correcto", async () => {
@@ -40,7 +40,7 @@ describe("CFP Factory", function () {
 
     before(async function () {
       const Factory = await ethers.getContractFactory("CFPFactory");
-      factory = await Factory.deploy();
+      factory = await Factory.deploy(ethers.ZeroAddress);
     });
 
     it("debe permitir el registro de creadores", async () => {
@@ -52,7 +52,7 @@ describe("CFP Factory", function () {
 
     it("debe emitir el evento CreatorRegistered al registrarse", async () => {
       const Factory = await ethers.getContractFactory("CFPFactory");
-      const f = await Factory.deploy();
+      const f = await Factory.deploy(ethers.ZeroAddress);
       await expect(f.connect(accounts[1]).register())
         .to.emit(f, "CreatorRegistered")
         .withArgs(accounts[1].address);
@@ -119,7 +119,7 @@ describe("CFP Factory", function () {
         await expect(
           factory
             .connect(accounts[i])
-            .create(callId, BigInt(closingTime + i))
+            .create(callId, BigInt(closingTime + i), 0n)
         ).to.be.revertedWith("No autorizado");
       }
     });
@@ -128,7 +128,7 @@ describe("CFP Factory", function () {
       for (let i = 0; i < accounts.length; i++) {
         const callId = gen.get(i);
         await expect(
-          factory.createFor(callId, BigInt(closingTime + i), accounts[i].address)
+          factory.createFor(callId, BigInt(closingTime + i), accounts[i].address, 0n)
         ).to.be.revertedWith("No autorizado");
       }
     });
@@ -141,7 +141,7 @@ describe("CFP Factory", function () {
 
     it("debe emitir el evento CreatorAuthorized al autorizar", async () => {
       const Factory = await ethers.getContractFactory("CFPFactory");
-      const f = await Factory.deploy();
+      const f = await Factory.deploy(ethers.ZeroAddress);
       await expect(f.authorize(accounts[1].address))
         .to.emit(f, "CreatorAuthorized")
         .withArgs(accounts[1].address);
@@ -149,7 +149,7 @@ describe("CFP Factory", function () {
 
     it("debe emitir el evento CreatorUnauthorized al desautorizar", async () => {
       const Factory = await ethers.getContractFactory("CFPFactory");
-      const f = await Factory.deploy();
+      const f = await Factory.deploy(ethers.ZeroAddress);
       await f.authorize(accounts[1].address);
       await expect(f.unauthorize(accounts[1].address))
         .to.emit(f, "CreatorUnauthorized")
@@ -195,25 +195,25 @@ describe("CFP Factory", function () {
         callIds.push(callId);
         await factory
           .connect(accounts[i])
-          .create(callId, BigInt(closingTime + i));
+          .create(callId, BigInt(closingTime + i), 0n);
       }
     });
 
     it("debe emitir el evento CFPCreated al crear con create()", async () => {
       const Factory = await ethers.getContractFactory("CFPFactory");
-      const f = await Factory.deploy();
+      const f = await Factory.deploy(ethers.ZeroAddress);
       await f.authorize(accounts[0].address);
       const latestBlock = await ethers.provider.getBlock("latest");
       const ct = latestBlock.timestamp + 2000;
       const callId = gen.next();
-      const tx = f.connect(accounts[0]).create(callId, BigInt(ct));
+      const tx = f.connect(accounts[0]).create(callId, BigInt(ct), 0n);
       const receipt = await (await tx).wait();
       const log = receipt.logs.find(
         (l) => l.fragment && l.fragment.name === "CFPCreated"
       );
       await expect(tx)
         .to.emit(f, "CFPCreated")
-        .withArgs(accounts[0].address, callId, log.args[2]);
+        .withArgs(accounts[0].address, callId, log.args[2], 0n);
     });
 
     it("debe permitir al dueño la creación de llamados a nombre de otro", async () => {
@@ -223,7 +223,8 @@ describe("CFP Factory", function () {
         await factory.createFor(
           callId,
           BigInt(closingTime + accounts.length + i),
-          accounts[i].address
+          accounts[i].address,
+          0n
         );
       }
       gen.set(2 * accounts.length);
@@ -231,38 +232,38 @@ describe("CFP Factory", function () {
 
     it("debe emitir el evento CFPCreated al crear con createFor()", async () => {
       const Factory = await ethers.getContractFactory("CFPFactory");
-      const f = await Factory.deploy();
+      const f = await Factory.deploy(ethers.ZeroAddress);
       await f.authorize(accounts[1].address);
       const latestBlock = await ethers.provider.getBlock("latest");
       const ct = latestBlock.timestamp + 2000;
       const callId = gen.next();
-      const tx = f.createFor(callId, BigInt(ct), accounts[1].address);
+      const tx = f.createFor(callId, BigInt(ct), accounts[1].address, 0n);
       const receipt = await (await tx).wait();
       const log = receipt.logs.find(
         (l) => l.fragment && l.fragment.name === "CFPCreated"
       );
       await expect(tx)
         .to.emit(f, "CFPCreated")
-        .withArgs(accounts[1].address, callId, log.args[2]);
+        .withArgs(accounts[1].address, callId, log.args[2], 0n);
     });
 
     it("deber rechazar el llamado a createFor por usuarios que no son el dueño", async () => {
       await expect(
         factory
           .connect(accounts[1])
-          .createFor(gen.next(), BigInt(closingTime), accounts[1].address)
+          .createFor(gen.next(), BigInt(closingTime), accounts[1].address, 0n)
       ).to.be.revertedWith("Solo el creador puede hacer esta llamada");
     });
 
     it("debe rechazar la creación de llamados con el mismo callId", async () => {
       await expect(
-        factory.create(callIds[0], BigInt(closingTime))
+        factory.create(callIds[0], BigInt(closingTime), 0n)
       ).to.be.revertedWith("El llamado ya existe");
     });
 
     it("debe rechazar la creación de llamados por parte del dueño con el mismo callId", async () => {
       await expect(
-        factory.createFor(callIds[0], BigInt(closingTime), accounts[1].address)
+        factory.createFor(callIds[0], BigInt(closingTime), accounts[1].address, 0n)
       ).to.be.revertedWith("El llamado ya existe");
     });
 
@@ -305,9 +306,10 @@ describe("CFP Factory", function () {
     });
 
     it("los contratos deben tener el creador correcto", async () => {
-      const factoryAddress = await factory.getAddress();
-      for (const cfp of cfps) {
-        expect(await cfp.creator()).to.equal(factoryAddress);
+      for (let i = 0; i < cfps.length; i++) {
+        expect(await cfps[i].creator()).to.equal(
+          accounts[i % accounts.length].address
+        );
       }
     });
 
@@ -368,7 +370,7 @@ describe("CFP Factory", function () {
   describe("Desautorización de creadores pendientes", function () {
     it("debe quitar de la lista de pendientes al desautorizar un creador pendiente", async () => {
       const Factory = await ethers.getContractFactory("CFPFactory");
-      const factory = await Factory.deploy();
+      const factory = await Factory.deploy(ethers.ZeroAddress);
 
       await factory.connect(accounts[0]).register();
       expect(await factory.isRegistered(accounts[0].address)).to.be.true;

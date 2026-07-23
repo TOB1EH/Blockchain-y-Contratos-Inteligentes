@@ -24,7 +24,7 @@ describe("Call for Proposals", function () {
       const latestBlock = await ethers.provider.getBlock("latest");
       closingTime = latestBlock.timestamp + 100;
       const CFP = await ethers.getContractFactory("CFP");
-      cfp = await CFP.deploy(callId, BigInt(closingTime));
+      cfp = await CFP.deploy(callId, BigInt(closingTime), 0n, ethers.ZeroAddress, accounts[0].address);
     });
 
     it("no debe haber propuestas", async () => {
@@ -42,6 +42,11 @@ describe("Call for Proposals", function () {
     it("debe tener el creador correcto", async () => {
       expect(await cfp.creator()).to.equal(accounts[0].address);
     });
+
+    it("debe tener guaranteeAmount = 0 y token = ZeroAddress", async () => {
+      expect(await cfp.guaranteeAmount()).to.equal(0n);
+      expect(await cfp.token()).to.equal(ethers.ZeroAddress);
+    });
   });
 
   describe("Inicialización incorrecta del contrato", function () {
@@ -49,7 +54,7 @@ describe("Call for Proposals", function () {
       const currentBlock = await ethers.provider.getBlock("latest");
       const CFP = await ethers.getContractFactory("CFP");
       await expect(
-        CFP.deploy(gen.next(), BigInt(currentBlock.timestamp))
+        CFP.deploy(gen.next(), BigInt(currentBlock.timestamp), 0n, ethers.ZeroAddress, accounts[0].address)
       ).to.be.revertedWith(
         "El cierre de la convocatoria no puede estar en el pasado"
       );
@@ -68,7 +73,7 @@ describe("Call for Proposals", function () {
       initialBlock = await ethers.provider.getBlock("latest");
       closingTime = initialBlock.timestamp + 100;
       const CFP = await ethers.getContractFactory("CFP");
-      cfp = await CFP.deploy(gen.get(0), BigInt(closingTime));
+      cfp = await CFP.deploy(gen.get(0), BigInt(closingTime), 0n, ethers.ZeroAddress, accounts[0].address);
       proposalCount = 5 + Math.trunc(Math.random() * 10);
       for (let i = 0; i < proposalCount; i++) {
         const proposal = gen.next();
@@ -195,7 +200,7 @@ describe("Call for Proposals", function () {
       const latestBlock = await ethers.provider.getBlock("latest");
       const closingTime = latestBlock.timestamp + 10;
       const CFP = await ethers.getContractFactory("CFP");
-      const cfp = await CFP.deploy(gen.next(), BigInt(closingTime));
+      const cfp = await CFP.deploy(gen.next(), BigInt(closingTime), 0n, ethers.ZeroAddress, accounts[0].address);
       await networkHelpers.time.increaseTo(closingTime + 1);
       await expect(cfp.registerProposal(gen.next())).to.be.revertedWith(
         "Convocatoria cerrada"
@@ -212,7 +217,7 @@ describe("Call for Proposals", function () {
         const latestBlock = await ethers.provider.getBlock("latest");
         closingTime = latestBlock.timestamp + 10;
         const CFP = await ethers.getContractFactory("CFP");
-        cfp = await CFP.deploy(gen.next(), BigInt(closingTime));
+        cfp = await CFP.deploy(gen.next(), BigInt(closingTime), 0n, ethers.ZeroAddress, accounts[0].address);
 
         // Registrar una propuesta antes del cierre
         proposalHash = gen.next();
@@ -237,7 +242,7 @@ describe("Call for Proposals", function () {
         const CFP = await ethers.getContractFactory("CFP");
         const latestBlock = await ethers.provider.getBlock("latest");
         const ct = latestBlock.timestamp + 5;
-        const newCfp = await CFP.deploy(gen.next(), BigInt(ct));
+        const newCfp = await CFP.deploy(gen.next(), BigInt(ct), 0n, ethers.ZeroAddress, accounts[0].address);
         const proposal = gen.next();
         await newCfp.registerProposal(proposal);
         await networkHelpers.time.increaseTo(ct + 1);
@@ -251,7 +256,7 @@ describe("Call for Proposals", function () {
         const CFP = await ethers.getContractFactory("CFP");
         const latestBlock = await ethers.provider.getBlock("latest");
         const ct = latestBlock.timestamp + 1000;
-        const newCfp = await CFP.deploy(gen.next(), BigInt(ct));
+        const newCfp = await CFP.deploy(gen.next(), BigInt(ct), 0n, ethers.ZeroAddress, accounts[0].address);
         const proposal = gen.next();
         await newCfp.registerProposal(proposal);
         await expect(
@@ -277,7 +282,7 @@ describe("Call for Proposals", function () {
         const latestBlock = await ethers.provider.getBlock("latest");
         const ct = latestBlock.timestamp + 5;
         const CFP = await ethers.getContractFactory("CFP");
-        const newCfp = await CFP.deploy(gen.next(), BigInt(ct));
+        const newCfp = await CFP.deploy(gen.next(), BigInt(ct), 0n, ethers.ZeroAddress, accounts[0].address);
 
         // Registrar propuesta ANTES del cierre
         const propuestaSinEntrega = gen.next();
