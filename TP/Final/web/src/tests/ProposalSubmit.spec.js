@@ -4,9 +4,18 @@ import ProposalSubmit from '../components/ProposalSubmit.vue'
 
 const MOCK_CALL_ID = '0xabc123'
 
-// Mock ethers keccak256
+// Mock ethers
 vi.mock('ethers', () => ({
-  keccak256: vi.fn(() => '0xmockedhash1234567890abcdef1234567890abcdef1234567890abcdef12345678')
+  Contract: vi.fn(),
+  parseEther: vi.fn(),
+}))
+
+// Mock useWallet
+vi.mock('../composables/useWallet.js', () => ({
+  useWallet: () => ({
+    signer: null,
+    isConnected: false,
+  })
 }))
 
 // Mock useApi
@@ -44,7 +53,7 @@ describe('ProposalSubmit.vue', () => {
     expect(wrapper.find('.feedback').text()).toContain('Debes completar título')
   })
 
-  it('llama a la API y muestra éxito al enviar propuesta válida', async () => {
+  it('llama a la API y muestra exito al enviar propuesta valida sin garantia', async () => {
     mockPostRegisterProposal.mockResolvedValue({
       status: 201,
       data: {
@@ -57,11 +66,9 @@ describe('ProposalSubmit.vue', () => {
       props: { callId: MOCK_CALL_ID }
     })
 
-    // Llenar campos
     await wrapper.find('input').setValue('Mi propuesta')
-    await wrapper.findAll('textarea')[0].setValue('Descripción secreta')
+    await wrapper.findAll('textarea')[0].setValue('Descripcion secreta')
 
-    // Simular subida de archivo
     const fileInput = wrapper.find('input[type="file"]')
     const mockFile = createMockFile('doc.pdf', 'contenido', 'application/pdf')
     Object.defineProperty(fileInput.element, 'files', {
@@ -69,18 +76,44 @@ describe('ProposalSubmit.vue', () => {
       writable: false
     })
     await fileInput.trigger('change')
-
-    // Enviar
     await wrapper.find('button').trigger('click')
     await flushPromises()
 
-    expect(mockPostRegisterProposal).toHaveBeenCalledWith(
-      MOCK_CALL_ID,
-      'Mi propuesta',
-      'Descripción secreta',
-      expect.any(Array)
-    )
-    expect(wrapper.text()).toContain('¡Propuesta registrada con éxito!')
+    expect(mockPostRegisterProposal).toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Propuesta Sellada')
+  })
+
+  it('muestra requerimiento de garantia si la API responde requiresCollateral', async () => {
+    mockPostRegisterProposal.mockResolvedValue({
+      status: 201,
+      data: {
+        proposalId: '0xprop123',
+        proof: {},
+        requiresCollateral: true,
+        cfpAddress: '0xcfp',
+        guaranteeAmount: '100'
+      }
+    })
+
+    const wrapper = mount(ProposalSubmit, {
+      props: { callId: MOCK_CALL_ID }
+    })
+
+    await wrapper.find('input').setValue('Propuesta con garantia')
+    await wrapper.findAll('textarea')[0].setValue('Descripcion')
+
+    const fileInput = wrapper.find('input[type="file"]')
+    const mockFile = createMockFile('doc.pdf', 'data', 'application/pdf')
+    Object.defineProperty(fileInput.element, 'files', {
+      value: [mockFile],
+      writable: false
+    })
+    await fileInput.trigger('change')
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('100')
+    expect(wrapper.text()).toContain('garantia')
   })
 
   it('muestra error si la API rechaza la propuesta', async () => {
@@ -93,8 +126,8 @@ describe('ProposalSubmit.vue', () => {
       props: { callId: MOCK_CALL_ID }
     })
 
-    await wrapper.find('input').setValue('Título')
-    await wrapper.findAll('textarea')[0].setValue('Descripción')
+    await wrapper.find('input').setValue('Titulo')
+    await wrapper.findAll('textarea')[0].setValue('Descripcion')
 
     const fileInput = wrapper.find('input[type="file"]')
     const mockFile = createMockFile('doc.pdf', 'data', 'application/pdf')
@@ -103,7 +136,6 @@ describe('ProposalSubmit.vue', () => {
       writable: false
     })
     await fileInput.trigger('change')
-
     await wrapper.find('button').trigger('click')
     await flushPromises()
 

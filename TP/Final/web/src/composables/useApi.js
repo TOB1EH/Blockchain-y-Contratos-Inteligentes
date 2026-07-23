@@ -35,8 +35,8 @@ export function useApi() {
       
     getCalls: (creator) =>
       apiFetch(`/calls${creator ? `?creator=${creator}` : ''}`),
-    postCreateCall: (callId, signature, title, description) =>
-      apiFetch('/create', { method: 'POST', body: JSON.stringify({ callId, signature, title, description }) }),
+    postCreateCall: (callId, signature, title, description, guaranteeAmount = 0, ensName = '', closingTime = 0) =>
+      apiFetch('/create', { method: 'POST', body: JSON.stringify({ callId, signature, title, description, guaranteeAmount, ensName, closingTime }) }),
     // --- NUEVOS ENDPOINTS PARA ETAPA 3 ---
     
     // Presentar propuesta (envía FormData con archivos reales)
@@ -61,6 +61,23 @@ export function useApi() {
 
     // Consultar datos de entrega y lista de archivos
     getDeliveryInfo: (proposalId) =>
-      apiFetch(`/deliveries/${proposalId}`)
+      apiFetch(`/deliveries/${proposalId}`),
+
+    // --- NUEVOS ENDPOINTS PARA TF ---
+
+    // Token
+    getTokenAddress: () => apiFetch('/token/address'),
+    getTokenName: () => apiFetch('/token/name'),
+    getTokenBalance: (address) => apiFetch(`/token/balance/${address}`),
+
+    // ENS
+    getEnsRegistry: () => apiFetch('/ens/registry'),
+    getEnsAddresses: () => apiFetch('/ens/addresses'),
+    postEnsResolve: (name) => apiFetch('/ens/resolve', { method: 'POST', body: JSON.stringify({ name }) }),
+    postEnsReverse: (address) => apiFetch('/ens/reverse', { method: 'POST', body: JSON.stringify({ address }) }),
+
+    // Garantia
+    getCallGuarantee: (callId) => apiFetch(`/calls/${callId}/guarantee`),
+    getProposals: (proponent) => apiFetch(`/proposals?proponent=${proponent}`),
   }
 }

@@ -92,30 +92,37 @@ function getDeliveryDownloadUrl(proposalId, fileHash) {
         {{ showVerifier ? 'Cerrar Verificador' : 'Abrir Verificador de Recibos' }}
       </button>
     </div>
-    <ReceiptVerifier v-if="showVerifier" />
+    <div v-if="showVerifier" class="modal-overlay" @click.self="showVerifier = false">
+      <div class="modal-content">
+        <button class="modal-close" @click="showVerifier = false">&times;</button>
+        <ReceiptVerifier />
+      </div>
+    </div>
     <hr>
     <h2>Creadores registrados</h2>
     <div v-if="loadingCreators">Cargando...</div>
-    <table v-else-if="creators.length">
+      <table v-else-if="creators.length">
       <thead>
         <tr>
-          <th>Dirección</th>
-          <th>Nombre</th>
+          <th>Creador</th>
           <th>Estado</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="c in creators" :key="c.address" :class="{ selected: filterCreator === c.address }">
-          <td>{{ c.address }}</td>
-          <td>{{ c.name }}</td>
-          <td>{{ c.status }}</td>
-          <td><button @click="selectCreator(c.address)">Ver llamados</button></td>
+          <td>
+            <span v-if="c.ens">{{ c.ens }}</span>
+            <span v-else>{{ c.address.slice(0, 6) }}...{{ c.address.slice(-4) }}</span>
+            <span v-if="c.name" class="creator-name">({{ c.name }})</span>
+          </td>
+            <td>{{ c.status }}</td>
+            <td><button @click="selectCreator(c.address)">Ver llamados</button></td>
         </tr>
       </tbody>
     </table>
     <p v-else>No hay creadores registrados.</p>
-    <h2 v-if="filterCreator">Llamados de {{ filterCreator }}</h2>
+    <h2 v-if="filterCreator">Llamados del creador</h2>
     <h2 v-else>Llamados globales</h2>
     <div v-if="loadingCalls">Cargando llamados...</div>
     
@@ -125,9 +132,12 @@ function getDeliveryDownloadUrl(proposalId, fileHash) {
           <div>
             <h4>{{ cl.title }}</h4>
             <p class="desc">{{ cl.description }}</p>
-            <small><strong>Creador:</strong> {{ cl.creator }}</small>
-            <br>
-            <small><strong>ID:</strong> {{ cl.call_id }}</small>
+            <div class="call-meta">
+              <span><strong>Creador:</strong> {{ cl.creator_ens || (cl.creator ? cl.creator.slice(0, 6) + '...' + cl.creator.slice(-4) : 'Desconocido') }}</span>
+              <span v-if="cl.guarantee_amount > 0"><strong>Garantia:</strong> {{ cl.guarantee_amount }} tokens</span>
+              <span v-else><strong>Sin garantia</strong></span>
+              <span v-if="cl.ens_name"><strong>ENS:</strong> {{ cl.ens_name }}.llamados.cfp</span>
+            </div>
           </div>
           <div class="call-status">
             <span :class="['badge', isCallOpen(cl.call_id) ? 'badge-open' : 'badge-closed']">
@@ -157,11 +167,10 @@ function getDeliveryDownloadUrl(proposalId, fileHash) {
             <div v-else-if="callDeliveries[cl.call_id] && callDeliveries[cl.call_id].length">
               <div v-for="del in callDeliveries[cl.call_id]" :key="del.proposal_id" class="public-proposal-card">
                 <div class="public-proposal-header">
-                  <strong>Propuesta {{ del.proposal_id.slice(0, 18) }}...</strong>
+                  <strong>Propuesta</strong>
                   <span class="delivery-date">Entregado: {{ del.delivered_at }}</span>
                 </div>
-                <p><strong>Sender:</strong> <code>{{ del.sender }}</code></p>
-                <p><strong>Files Root:</strong> <code>{{ del.files_root }}</code></p>
+                <p><strong>Entregado por:</strong> {{ del.sender.slice(0, 6) }}...{{ del.sender.slice(-4) }}</p>
                 <div v-if="del.files && del.files.length" class="public-proposal-files">
                   <strong>Archivos:</strong>
                   <ul class="public-file-list">
@@ -170,7 +179,6 @@ function getDeliveryDownloadUrl(proposalId, fileHash) {
                         <span class="file-icon">&#128206;</span>
                         {{ file.file_name }}
                       </a>
-                      <span class="file-hash-label">{{ file.file_hash.slice(0, 18) }}...</span>
                     </li>
                   </ul>
                 </div>
@@ -302,16 +310,47 @@ function getDeliveryDownloadUrl(proposalId, fileHash) {
   margin-right: 4px;
 }
 
-.file-hash-label {
-  font-size: 0.75em;
-  color: #aaa;
-  font-family: monospace;
-}
-
 .public-proposal-no-files {
   font-size: 0.85em;
   color: #999;
   font-style: italic;
   margin-top: 4px;
+}
+
+.call-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 0.85em;
+  color: #666;
+  flex-wrap: wrap;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-content {
+  background: #fff;
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 500px;
+  width: 90%;
+  position: relative;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.modal-close {
+  position: absolute;
+  top: 8px; right: 12px;
+  font-size: 1.5em;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: #666;
 }
 </style>

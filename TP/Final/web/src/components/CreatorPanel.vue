@@ -1,13 +1,13 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, inject } from 'vue'
 import { Contract, keccak256, toUtf8Bytes, encodeRlp } from 'ethers'
 import { useWallet } from '../composables/useWallet.js'
 import { useApi } from '../composables/useApi.js'
 import { buildRegisterMessage, buildUpdateMessage, buildCreateMessage } from '../utils/eip712.js'
 
-// Declarar estado reactivo del panel de creador
 const api = useApi()
 const { account, signer, chainId, isConnected } = useWallet()
+const navigateTo = inject('navigateTo')
 const status = ref(null)
 const dbEntry = ref(null)
 const contractAddress = ref('')
@@ -16,11 +16,14 @@ const newName = ref('')
 const msg = ref('')
 const loadingStatus = ref(false)
 const isRegisteredOnChain = ref(false)
+const ensName = ref('')
+const ensLoading = ref(true)
 
 // Estado para el formulario de creacion de llamado
 const callTitle = ref('')
 
 const callDescription = ref('')
+const callEnsName = ref('')
 const now = new Date()
 now.setDate(now.getDate() + 7)
 const closingDateTime = ref(now.toISOString().slice(0, 16))
@@ -33,23 +36,52 @@ const expandedCallId = ref(null)
 const callProposals = ref({})
 const loadingProposals = ref({})
 
+// Estado para garantia
+const guaranteeAmount = ref(0)
+
+// Estado para finalizar llamados
+const finalizing = ref(false)
+const selectedProposals = ref({})
+
 // Definir ABI minima del factory para registro on-chain y creacion de llamados
 const FACTORY_ABI = [
   'function register()',
   'function isRegistered(address) view returns (bool)',
-  'function create(bytes32 callId, uint256 timestamp)'
+  'function create(bytes32 callId, uint256 timestamp, uint256 guaranteeAmount)'
+]
+
+const CFP_ABI = [
+  'function finalize(bytes32[] calldata _acceptedProposals)',
+  'function guaranteeAmount() view returns (uint256)',
+  'function finalized() view returns (bool)',
+  'function creator() view returns (address)',
+  'function acceptedProposals(uint256) view returns (bytes32)',
+  'function proposalCount() view returns (uint256)',
 ]
 
 // Verificar estado del creador al conectar cuenta
 watch(account, async () => {
   msg.value = ''
+  ensName.value = ''
   if (!account.value) { 
     status.value = null; dbEntry.value = null; isRegisteredOnChain.value = false; 
     return 
   }
   loadingStatus.value = true
+  ensLoading.value = true
   const addrRes = await api.getContractAddress()
   contractAddress.value = addrRes.data.address
+
+  // Consultar ENS inverso
+  try {
+    const ensRes = await api.postEnsReverse(account.value)
+    if (ensRes.status === 200 && ensRes.data.name) {
+      ensName.value = ensRes.data.name
+    }
+  } catch (e) {
+    // ENS no configurado o error
+  }
+  ensLoading.value = false
   
   // Consultar al contrato si ya está registrado on-chain para ocultar el Paso 1
   if (signer.value && contractAddress.value) {
@@ -156,14 +188,21 @@ async function updateProfile() {
 }
 
 // Calcular callId = keccak256(rlp.encode([title, description]))
+// rstrippeamos para coincidir con la validacion de la API
 function computeCallId(title, description) {
-  const encoded = encodeRlp([toUtf8Bytes(title), toUtf8Bytes(description)])
+  const encoded = encodeRlp([toUtf8Bytes(title.trimEnd()), toUtf8Bytes(description.trimEnd())])
   return keccak256(encoded)
 }
 
 // Crear un nuevo llamado (doble interaccion: off-chain + on-chain)
 async function createCall() {
   if (!signer.value || !contractAddress.value || !callTitle.value || !callDescription.value) return
+  const closingTimestamp = Math.floor(new Date(closingDateTime.value).getTime() / 1000)
+  const now = Math.floor(Date.now() / 1000)
+  if (closingTimestamp <= now + 300) {
+    msg.value = 'La fecha de cierre debe ser al menos 5 minutos en el futuro'
+    return
+  }
   const callId = computeCallId(callTitle.value, callDescription.value)
   creatingCall.value = true
   try {
@@ -173,7 +212,9 @@ async function createCall() {
     const signature = await signer.value.signTypedData(
       typedData.domain, typedData.types, typedData.message
     )
-    const offRes = await api.postCreateCall(callId, signature, callTitle.value, callDescription.value)
+    const cleanTitle = callTitle.value.trimEnd()
+    const cleanDesc = callDescription.value.trimEnd()
+    const offRes = await api.postCreateCall(callId, signature, cleanTitle, cleanDesc, guaranteeAmount.value, callEnsName.value, closingTimestamp)
     if (offRes.status !== 201) {
       msg.value = `Error off-chain: ${offRes.data.message}`
       creatingCall.value = false
@@ -182,11 +223,9 @@ async function createCall() {
     msg.value = 'Paso 1/2 completado. Ahora firma la transaccion on-chain...'
 
     // Paso 2: Enviar transaccion on-chain al contrato factory
-    
-    const closingTimestamp = Math.floor(new Date(closingDateTime.value).getTime() / 1000)
 
     const contract = new Contract(contractAddress.value, FACTORY_ABI, signer.value)
-    const tx = await contract.create(callId, closingTimestamp)
+    const tx = await contract.create(callId, closingTimestamp, BigInt(guaranteeAmount.value))
     msg.value = `Paso 2/2: Transaccion enviada: ${tx.hash}. Esperando confirmacion...`
     const receipt = await tx.wait()
     if (!receipt || receipt.status === 0) {
@@ -195,6 +234,8 @@ async function createCall() {
     msg.value = `Llamado creado exitosamente. La cadena lo confirmara en breve.`
     callTitle.value = ''
     callDescription.value = ''
+    callEnsName.value = ''
+    guaranteeAmount.value = 0
     const nextDefault = new Date()
     nextDefault.setDate(nextDefault.getDate() + 7)
     closingDateTime.value = nextDefault.toISOString().slice(0, 16)
@@ -208,6 +249,7 @@ async function createCall() {
 }
 // Cargar los llamados creados por el creador actual
 async function loadMyCalls() {
+  if (!account.value) return
   loadingCalls.value = true
   try {
     const res = await api.getCalls(account.value)
@@ -246,7 +288,56 @@ function getProposalDownloadUrl(proposalId, fileHash) {
   return `/api/proposals/${proposalId}/files/${fileHash}`
 }
 
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    msg.value = 'proposalId copiado'
+    setTimeout(() => msg.value = '', 2000)
+  })
+}
+
+function toggleProposal(callId, proposalId) {
+  if (!selectedProposals.value[callId]) selectedProposals.value[callId] = []
+  const idx = selectedProposals.value[callId].indexOf(proposalId)
+  if (idx === -1) {
+    selectedProposals.value[callId].push(proposalId)
+  } else {
+    selectedProposals.value[callId].splice(idx, 1)
+  }
+}
+
+async function doFinalize(callId) {
+  if (!signer.value) return
+  finalizing.value = true
+  msg.value = 'Finalizando llamado...'
+  try {
+    const res = await api.getCallGuarantee(callId)
+    if (res.status !== 200) {
+      msg.value = 'No se pudo obtener la informacion del llamado'
+      return
+    }
+    const cfpAddr = res.data.cfp
+    if (!cfpAddr) {
+      msg.value = 'El llamado no tiene direccion CFP'
+      return
+    }
+    const cfpContract = new Contract(cfpAddr, CFP_ABI, signer.value)
+    const accepted = selectedProposals.value[callId] || []
+    const tx = await cfpContract.finalize(accepted)
+    msg.value = `Finalizacion enviada: ${tx.hash}. Esperando confirmacion...`
+    await tx.wait()
+    msg.value = 'Llamado finalizado exitosamente.'
+    selectedProposals.value[callId] = []
+    await loadMyCalls()
+  } catch (e) {
+    msg.value = `Error: ${e.message}`
+  } finally {
+    finalizing.value = false
+  }
+}
+
+
 </script>
+
 <template>
   <div>
     <h2>Panel de Creador</h2>
@@ -256,8 +347,18 @@ function getProposalDownloadUrl(proposalId, fileHash) {
       <p>No puedes registrarte como creador con la cuenta administradora.</p>
     </div>
     <div v-else>
-      <p><strong>Direccion:</strong> {{ account }}</p>
-      <p><strong>Estado:</strong> {{ status || 'pending' }}</p>
+      <p><strong>Cuenta:</strong> {{ account.slice(0, 6) }}...{{ account.slice(-4) }}</p>
+      <p v-if="ensName"><strong>ENS:</strong> {{ ensName }}</p>
+      <p><strong>Estado:</strong>
+        <span :class="['badge', status === 'authorized' ? 'badge-open' : 'badge-closed']">{{ status || 'pending' }}</span>
+      </p>
+
+      <!-- Exigir ENS antes de registro -->
+      <div v-if="!ensName && !ensLoading && !isRegisteredOnChain && status !== 'authorized'" class="ens-required">
+        <h3>Registro ENS requerido</h3>
+        <p>Debes registrar un nombre en <code>usuarios.cfp</code> antes de registrarte como creador.</p>
+        <button @click="navigateTo('ens')">Ir a Registro ENS</button>
+      </div>
       
       <!-- Mostrar sección de registro si está en estado pending -->
       <div v-if="status === 'pending'">
@@ -300,6 +401,18 @@ function getProposalDownloadUrl(proposalId, fileHash) {
         <div>
           <label>Fecha y hora de cierre:<br><input v-model="closingDateTime" type="datetime-local" :disabled="creatingCall" /></label>
         </div>
+        <div>
+          <label>Garantia (tokens):<br>
+            <input v-model.number="guaranteeAmount" type="number" min="0" :disabled="creatingCall" />
+            <small> 0 = sin garantia. > 0 requiere deposito previo de tokens.</small>
+          </label>
+        </div>
+        <div>
+          <label>Nombre ENS del llamado:<br>
+            <input v-model="callEnsName" placeholder="ej: mi-llamado" :disabled="creatingCall" />
+            <small> Se registrara como <code>{{ callEnsName ? callEnsName + '.llamados.cfp' : '...llamados.cfp' }}</code></small>
+          </label>
+        </div>
         <button @click="createCall" :disabled="creatingCall || !callTitle || !callDescription">
           {{ creatingCall ? 'Creando llamado...' : 'Crear Llamado' }}
         </button>
@@ -319,14 +432,12 @@ function getProposalDownloadUrl(proposalId, fileHash) {
                   <span class="call-card-title">{{ cl.title }}</span>
                   <span class="call-status-badge">{{ cl.status }}</span>
                 </div>
-                <div class="call-card-id-line">ID: {{ cl.call_id.slice(0, 18) }}...</div>
               </div>
               <div v-if="expandedCallId === cl.call_id" class="call-card-body">
                 <div class="call-info-grid">
                   <div><strong>Descripción:</strong> {{ cl.description }}</div>
-                  <div><strong>ID completo:</strong> <code>{{ cl.call_id }}</code></div>
-                  <div v-if="cl.cfp_address"><strong>Contrato CFP:</strong> <code>{{ cl.cfp_address }}</code></div>
-                  <div v-if="cl.creator"><strong>Creador:</strong> <code>{{ cl.creator }}</code></div>
+                  <div v-if="cl.ens_name"><strong>ENS:</strong> {{ cl.ens_name }}.llamados.cfp</div>
+                  <div v-if="cl.guarantee_amount > 0"><strong>Garantia:</strong> {{ cl.guarantee_amount }} tokens</div>
                 </div>
                 <hr class="section-divider">
                 <h4 class="proposals-title">Propuestas recibidas</h4>
@@ -335,7 +446,10 @@ function getProposalDownloadUrl(proposalId, fileHash) {
                   <div v-for="prop in callProposals[cl.call_id]" :key="prop.proposalId" class="proposal-card">
                     <div class="proposal-header">
                       <strong>{{ prop.title }}</strong>
-                      <code class="proposal-id">{{ prop.proposalId.slice(0, 18) }}...</code>
+                      <label v-if="cl.guarantee_amount > 0" class="accept-checkbox">
+                        <input type="checkbox" :checked="selectedProposals[cl.call_id]?.includes(prop.proposalId)" @change="toggleProposal(cl.call_id, prop.proposalId)" />
+                        Aceptar
+                      </label>
                     </div>
                     <p class="proposal-desc">{{ prop.description }}</p>
                     <div v-if="prop.files && prop.files.length" class="proposal-files">
@@ -346,11 +460,19 @@ function getProposalDownloadUrl(proposalId, fileHash) {
                             <span class="file-icon">&#128206;</span>
                             {{ file.name }}
                           </a>
-                          <span class="file-hash">{{ file.hash.slice(0, 18) }}...</span>
                         </li>
                       </ul>
                     </div>
                     <div v-else class="proposal-no-files">Sin archivos adjuntos.</div>
+                  </div>
+                  <div v-if="cl.guarantee_amount > 0 && selectedProposals[cl.call_id]?.length" class="finalize-row">
+                    <div v-if="account !== cl.creator" class="warning-msg">
+                      La cuenta conectada ({{ account?.slice(0,6) }}...) no es el creador de este llamado ({{ cl.creator?.slice(0,6) }}...).
+                      Conecta la wallet del creador para finalizar.
+                    </div>
+                    <button v-if="account === cl.creator" @click.stop="doFinalize(cl.call_id)" :disabled="finalizing" class="btn-finalize">
+                      {{ finalizing ? 'Finalizando...' : 'Finalizar llamado y aceptar ' + selectedProposals[cl.call_id].length + ' propuesta(s)' }}
+                    </button>
                   </div>
                 </div>
                 <div v-else>
@@ -419,12 +541,6 @@ function getProposalDownloadUrl(proposalId, fileHash) {
   font-weight: 600;
 }
 
-.call-card-id-line {
-  font-size: 0.8em;
-  color: #888;
-  font-family: monospace;
-}
-
 .call-card-body {
   padding: 0 16px 16px;
   border-top: 1px dashed #e0e0e0;
@@ -473,12 +589,6 @@ function getProposalDownloadUrl(proposalId, fileHash) {
   margin-bottom: 4px;
 }
 
-.proposal-id {
-  font-size: 0.75em;
-  color: #999;
-  font-family: monospace;
-}
-
 .proposal-desc {
   margin: 4px 0 8px;
   font-size: 0.9em;
@@ -521,12 +631,59 @@ function getProposalDownloadUrl(proposalId, fileHash) {
   margin-right: 4px;
 }
 
-.file-hash {
-  font-size: 0.75em;
-  color: #aaa;
-  font-family: monospace;
+.proposal-id-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 0.8em;
 }
-
+.proposal-id-copy {
+  font-family: monospace;
+  font-size: 0.8em;
+  word-break: break-all;
+  background: #f0f0f0;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.copy-btn {
+  font-size: 0.75em;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.accept-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85em;
+  cursor: pointer;
+  user-select: none;
+}
+.finalize-row {
+  text-align: right;
+  margin-top: 8px;
+}
+.btn-finalize {
+  padding: 8px 16px;
+  font-size: 0.9em;
+  background: #d32f2f;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-finalize:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.warning-msg {
+  font-size: 0.85em;
+  color: #d32f2f;
+  background: #ffebee;
+  padding: 8px;
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
 .proposal-no-files {
   font-size: 0.85em;
   color: #999;

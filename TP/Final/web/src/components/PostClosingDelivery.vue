@@ -92,7 +92,7 @@ function downloadDeliveryReceipt() {
         <li><strong>TxHash:</strong> {{ deliveryReceipt.txHash }}</li>
         <li><strong>Bloque:</strong> {{ deliveryReceipt.blockNumber }}</li>
       </ul>
-      <p style="margin-top: 10px;">Tus archivos ya son públicos.</p>
+      <p style="margin-top: 10px;">Archivos entregados exitosamente al creador del llamado.</p>
       <button @click="downloadDeliveryReceipt" style="margin-top: 10px;">
         Descargar Recibo de Entrega
       </button>

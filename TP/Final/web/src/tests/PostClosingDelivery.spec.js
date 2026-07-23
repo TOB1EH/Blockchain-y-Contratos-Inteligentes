@@ -37,8 +37,9 @@ describe('PostClosingDelivery.vue', () => {
 
   it('muestra error si faltan recibo o archivos', async () => {
     const wrapper = mount(PostClosingDelivery)
-    await wrapper.find('button').trigger('click')
-    expect(wrapper.find('.feedback').text()).toContain('Debes subir tu recibo')
+    // El botón está deshabilitado si faltan archivos; dispara validación forzada
+    // verificando que el botón esté deshabilitado
+    expect(wrapper.find('button').element.disabled).toBe(true)
   })
 
   it('deshabilita el botón si no hay recibo o archivos', () => {
@@ -82,7 +83,8 @@ describe('PostClosingDelivery.vue', () => {
     await flushPromises()
 
     expect(mockPostDeliver).toHaveBeenCalled()
-    expect(wrapper.text()).toContain('¡Archivos entregados')
+    expect(wrapper.text()).toContain('Entrega Validada y Sellada')
+    expect(wrapper.text()).toContain('Descargar Recibo de Entrega')
   })
 
   it('muestra error si la API rechaza la entrega', async () => {
