@@ -1,282 +1,180 @@
-# Trabajo Práctico 10 — Interfaz web
+# TP Final - Interfaz web
 
 ## Stack utilizado
 
 - **Vue 3** (Composition API con `<script setup>`) como framework frontend
 - **Vite 8** como bundler y servidor de desarrollo
-- **ethers.js v6** para conexión con MetaMask y firma EIP-712
+- **ethers.js v6** para conexion con MetaMask y firma EIP-712
 - **vitest** + **jsdom** para pruebas de componentes
 - **@vue/test-utils** como utility de testing
 
-## Instalación y puesta en marcha
+## Instalacion y puesta en marcha
 
 ```bash
-cd TP/10/web
+cd TP/Final/web
 npm install
 npm run dev
 ```
 
-El servidor de desarrollo queda en `http://localhost:5173`. Las peticiones a `/api/*` se redirigen automáticamente al servidor Flask en `http://127.0.0.1:5000` mediante el proxy configurado en `vite.config.js`, evitando problemas de CORS.
+El servidor de desarrollo queda en `http://localhost:5173`. Las peticiones a
+`/api/*` se redirigen al servidor Flask mediante proxy configurado en
+`vite.config.js`.
 
 ### Requisitos previos
 
-1. Nodo Hardhat corriendo en el puerto 8545 (ver `TP/10/contracts/README.md`)
-2. Contrato `CFPFactory` desplegado y variables de entorno configuradas (ver `TP/10/api/README.md`)
+1. Nodo Hardhat corriendo en el puerto 8545
+2. Contratos desplegados (ENS + Token + CFPFactory)
 3. Servidor Flask de la API corriendo en `http://127.0.0.1:5000`
-4. MetaMask instalado en el navegador, conectado a la red local (chainId 31337) con cuentas fondeadas
+4. MetaMask instalado, conectado a localhost:8545 (chainId 31337)
 
-### Estructura del proyecto
+## Estructura del proyecto
 
 ```
 web/
 ├── src/
 │   ├── main.js                    # Punto de entrada Vue
-│   ├── App.vue                    # Componente raíz con navegación y wallet
+│   ├── App.vue                    # Componente raiz con navegacion y wallet
 │   ├── components/
-│   │   ├── PublicView.vue         # Vista pública: creadores, llamados, propuestas, entregas
-│   │   ├── CreatorPanel.vue       # Panel de creador: registro, perfil, creación llamados
+│   │   ├── PublicView.vue         # Vista publica: creadores, llamados, propuestas, entregas
+│   │   ├── CreatorPanel.vue       # Panel de creador: registro, perfil, creacion llamados
 │   │   ├── AdminPanel.vue         # Panel de admin: autorizar/desautorizar
-│   │   ├── ProposalSubmit.vue     # Presentación anónima de propuesta (sin MetaMask)
-│   │   ├── ReceiptVerifier.vue    # Verificación de recibo (Merkle + on-chain, soporta proposal y delivery)
-│   │   └── PostClosingDelivery.vue # Entrega post-cierre con archivos físicos
+│   │   ├── ProposalSubmit.vue     # Presentacion de propuesta (anonima o con garantia)
+│   │   ├── ReceiptVerifier.vue    # Verificacion de recibo (Merkle + on-chain)
+│   │   ├── PostClosingDelivery.vue # Entrega post-cierre con archivos fisicos
+│   │   ├── TokenPanel.vue         # Compra y redencion de tokens ERC-20
+│   │   ├── EnsPanel.vue           # Resolucion ENS (directa e inversa)
+│   │   └── GuaranteePanel.vue     # Finalizar llamado y reclamar reembolso
 │   ├── composables/
-│   │   ├── useWallet.js           # Conexión/desconexión MetaMask
+│   │   ├── useWallet.js           # Conexion/desconexion MetaMask
 │   │   └── useApi.js              # Fetch wrapper para endpoints REST
 │   ├── utils/
-│   │   └── eip712.js              # Builders EIP-712 (domain, tipos, mensajes)
+│   │   └── eip712.js              # Builders EIP-712
 │   └── tests/
-│       └── PublicView.spec.js     # Test de componente con mock
+│       ├── PublicView.spec.js
+│       ├── ProposalSubmit.spec.js
+│       └── PostClosingDelivery.spec.js
 ├── index.html
 ├── package.json
-└── vite.config.js                 # Proxy /api, alias @, config vitest
+└── vite.config.js
 ```
 
 ## Roles y operaciones
 
-### Público general (sin MetaMask o sin conectar)
+### Publico general (sin MetaMask)
 
-| Operación | Tipo | Endpoint/Método | Componente |
-|-----------|------|-----------------|------------|
-| Ver creadores registrados | API (GET) | `/creators` | `PublicView.vue` |
-| Ver llamados (global o por creador) | API (GET) | `/calls`, `/calls?creator=0x...` | `PublicView.vue` |
-| Presentar propuesta anónima | API (POST) | `/register-proposal` | `ProposalSubmit.vue` |
-| Verificar recibo (Merkle + on-chain) | API (POST) / MetaMask (lectura) | `/verify-proof`, consulta on-chain `CFP.proposalData()` | `ReceiptVerifier.vue` |
-| Entregar archivos post-cierre | API (POST) | `/deliver` | `PostClosingDelivery.vue` |
-| Consultar entrega y descargar archivos | API (GET) | `/deliveries/<id>`, `/deliveries/<id>/files/<hash>` | `PublicView.vue` |
+| Operacion | Componente |
+|-----------|------------|
+| Ver creadores registrados | PublicView |
+| Ver llamados (por creador o global) | PublicView |
+| Presentar propuesta anonima (sin garantia) | ProposalSubmit |
+| Verificar recibo (Merkle + on-chain) | ReceiptVerifier |
+| Entregar archivos post-cierre | PostClosingDelivery |
+| Resolver nombre ENS a direccion | EnsPanel |
+| Conversion inversa (direccion a nombre) | EnsPanel |
 
 ### Creador (MetaMask conectada, NO admin)
 
-La UI detecta automáticamente si la cuenta conectada es admin y en ese caso bloquea el registro.
+| Operacion | Componente |
+|-----------|------------|
+| Registro on-chain (MetaMask tx) | CreatorPanel |
+| Registro off-chain (firma EIP-712) | CreatorPanel |
+| Crear llamado (con garantia opcional y nombre ENS opcional) | CreatorPanel |
+| Ver propuestas recibidas | CreatorPanel |
+| Comprar tokens ERC-20 | TokenPanel |
+| Redimir tokens ERC-20 por ETH | TokenPanel |
+| Registrar nombre ENS en usuarios.cfp | CreatorPanel (integrado en registro) |
+| Finalizar llamado (solo creador, seleccionando aceptadas) | CreatorPanel |
 
-| Operación | Tipo | Endpoint/Método | Componente |
-|-----------|------|-----------------|------------|
-| Conectar/desconectar wallet | MetaMask | `eth_requestAccounts` | `App.vue` / `useWallet.js` |
-| Consultar estado de registro | API (GET) | `/registrations/:address` | `CreatorPanel.vue` |
-| Registro on-chain | MetaMask tx | `CFPFactory.register()` | `CreatorPanel.vue` |
-| Registro off-chain (firma + POST) | API (POST) + EIP-712 | `POST /register` | `CreatorPanel.vue` |
-| Actualizar perfil (firma + PATCH) | API (PATCH) + EIP-712 | `PATCH /registrations/:address` | `CreatorPanel.vue` |
-| Crear llamado (doble interacción) | API (POST) + EIP-712 + MetaMask tx | `POST /create` + `CFPFactory.create()` | `CreatorPanel.vue` |
+### Administrador (MetaMask conectada, cuenta == admin)
 
-#### Flujo de registro (2 pasos)
+| Operacion | Componente |
+|-----------|------------|
+| Autorizar creadores | AdminPanel |
+| Desautorizar creadores | AdminPanel |
+| Ver solicitudes pendientes | AdminPanel |
 
-1. **On-chain**: usuario firma transacción MetaMask a `CFPFactory.register()`.
-   - Mientras espera: `msg = 'Enviando transaccion on-chain...'` y luego `'Esperando confirmacion...'`
-   - Confirmada: pasa al Paso 2.
-   - Fallida: muestra el error de MetaMask.
-2. **Off-chain**: usuario completa nombre, firma mensaje EIP-712 (`RegisterRequest`, operation `"register"`, nonce 0) y lo envía a `POST /register`.
-   - Exitosa: estado reflejado en la UI (`pending`, `registered` o `authorized`).
-   - Fallida: muestra el mensaje de error devuelto por la API.
+### Proponente con garantia
 
-#### Flujo de creación de llamado (2 pasos, solo autorizados)
+| Operacion | Componente |
+|-----------|------------|
+| Presentar propuesta con garantia (approve + registerWithCollateral) | ProposalSubmit |
+| Reclamar reembolso de garantia (pull mechanism) | GuaranteePanel |
 
-1. **Off-chain**: creador completa título y descripción, firma mensaje EIP-712 (`CreateRequest`, operation `"create"`, `callId`) y lo envía a `POST /create`. La API lo almacena con estado `"pending"`.
-2. **On-chain**: creador firma transacción MetaMask a `CFPFactory.create(callId, closingTime)`.
-   - Pendiente: se muestra el tx hash mientras se espera confirmación.
-   - Confirmada: el estado pasa a `"created"` (detectado por event listener).
-   - Fallida: se muestra el error de MetaMask.
+## Flujos nuevos (TP Final)
 
-#### Estructuras EIP-712 usadas por el creador
+### Compra de tokens
 
-**RegisterRequest** (registro: `operation = "register"`, nonce 0; actualización: `operation = "update"`, nonce actual):
+1. Ir a la pestana "Token"
+2. Ingresar cantidad de ETH a convertir
+3. Firmar transaccion MetaMask a `CFPGovernanceToken.buy()`
+4. Los tokens aparecen en el balance
 
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| `operation` | `string` | `"register"` o `"update"` |
-| `contract` | `address` | Dirección del `CFPFactory` |
-| `nonce` | `uint256` | 0 para registro, nonce actual para update |
-| `name` | `string` | Nombre del creador |
+### Redencion de tokens
 
-**CreateRequest** (creación de llamado: `operation = "create"`):
+1. Ingresar cantidad de tokens a redimir
+2. Firmar transaccion MetaMask a `CFPGovernanceToken.redeem(amount)`
+3. El ETH se transfiere a la wallet
 
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| `operation` | `string` | `"create"` |
-| `contract` | `address` | Dirección del `CFPFactory` |
-| `callId` | `bytes32` | `keccak256(rlp([title_utf8, desc_utf8]))` |
+### Presentacion con garantia
 
-### Administrador (MetaMask conectada, cuenta == `CFP_ADMIN_ADDRESS`)
+Para llamados con `guaranteeAmount > 0`:
 
-La UI compara `account` contra `GET /admin/address`. Solo si coinciden se muestra el panel.
+1. Comprar tokens si no se tienen suficientes (TokenPanel)
+2. Ir al llamado en PublicView y hacer clic en "Presentar Propuesta"
+3. Completar titulo, descripcion y archivos
+4. La API responde con `requiresCollateral: true`
+5. Paso adicional: firmar `approve()` para autorizar al CFP a gastar tokens
+6. Firmar `registerProposalWithCollateral()` para depositar la garantia
 
-| Operación | Tipo | Endpoint/Método | Componente |
-|-----------|------|-----------------|------------|
-| Verificar rol admin | API (GET) | `/admin/address` | `AdminPanel.vue` |
-| Ver solicitudes pendientes | API (GET) | `/admin/pending` | `AdminPanel.vue` |
-| Autorizar creador (firma + POST) | API (POST) + EIP-712 | `POST /authorize/:address` | `AdminPanel.vue` |
-| Desautorizar creador (firma + POST) | API (POST) + EIP-712 | `POST /unauthorize/:address` | `AdminPanel.vue` |
-| Obtener nonce admin | API (GET) | `/admin/nonce` | `AdminPanel.vue` |
+### Finalizar llamado
 
-#### Estructuras EIP-712 usadas por el admin
+Solo el creador puede finalizar un llamado con garantia:
 
-**AdminActionRequest** (autorizar: `operation = "authorize"`; desautorizar: `operation = "unauthorize"`):
+1. Ir a la pestana "Creador"
+2. Expandir el llamado (seccion "Llamados con garantia")
+3. Seleccionar las propuestas aceptadas con checkbox
+4. Click en "Finalizar llamado y aceptar N propuesta(s)"
+5. Firmar la transaccion `finalize(bytes32[])` via MetaMask
+6. El contrato marca el llamado como finalizado con la lista de aceptadas
 
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| `operation` | `string` | `"authorize"` o `"unauthorize"` |
-| `contract` | `address` | Dirección del `CFPFactory` |
-| `nonce` | `uint256` | Nonce actual del admin (de `GET /admin/nonce`) |
-| `target` | `address` | Dirección a autorizar/desautorizar |
+### Reclamar reembolso
 
-## Dominio EIP-712 común
+Los proponentes no aceptados pueden recuperar su garantia:
 
-Todas las firmas usan el mismo dominio:
+1. Ir a la pestana "Garantia"
+2. La seccion "Mis Propuestas" carga automaticamente las propuestas del usuario
+3. El estado de cada una se verifica on-chain: "Propuesta aceptada" (verde, sin boton) o "Propuesta rechazada" (con boton)
+4. Click en "Reclamar Reembolso" para la propuesta rechazada
+5. Firmar `claimRefund()` via MetaMask
+6. Los tokens vuelven a la wallet del proponente
 
-```json
-{
-  "name": "CFP API",
-  "version": "1",
-  "chainId": <id de la cadena>,
-  "verifyingContract": "<dirección del CFPFactory>"
-}
-```
+## Metodos de useApi.js
 
-El `chainId` se obtiene dinámicamente de MetaMask (`provider.getNetwork().chainId`). La dirección del contrato se obtiene de `GET /contract-address`.
-
-## Manejo de errores
-
-| Situación | Comportamiento |
-|-----------|----------------|
-| MetaMask no instalado | `walletError = 'MetaMask no instalado'`; botón conectar inhabilitado; vistas públicas funcionales |
-| Usuario rechaza conexión | `walletError` con el mensaje de MetaMask |
-| Red incorrecta (no 31337) | Mensaje rojo: "Red incorrecta (debe ser 31337)" |
-| Cuenta conectada es admin e intenta registrarse | Mensaje: "No puedes registrarte como creador con la cuenta administradora." (backend devuelve 403 ADMIN_CANNOT_REGISTER) |
-| Firma inválida | API devuelve `INVALID_SIGNATURE`; se muestra en `msg` del panel |
-| Nonce inválido | API devuelve `INVALID_SIGNATURE` (nonce incorrecto en la firma) |
-| No autorizado | API devuelve `UNAUTHORIZED` (creador no autorizado intenta create) |
-| Convocatoria no cerrada | API devuelve `CALL_NOT_CLOSED` al intentar entregar en llamado abierto |
-| Entrega ya registrada | API devuelve `ALREADY_DELIVERED` al intentar entregar dos veces |
-| Recibo inválido | API devuelve `INVALID_PROPOSAL` si el recibo o los hashes no coinciden |
-| Transacción revertida | MetaMask muestra el error; se captura y muestra en `msg` |
-| Transacción pendiente | `msg` muestra el tx hash y "Esperando confirmacion..." |
-| Transacción confirmada | `msg` actualiza con resultado exitoso |
-| Conexión perdida | MetaMask emite `accountsChanged` con array vacío; `disconnectWallet()` limpia el estado |
-| Cambio de cuenta/red | MetaMask emite `accountsChanged`/`chainChanged`; `connectWallet()` se re-ejecuta |
-
-## Estados transaccionales
-
-Para cada operación on-chain (`CFPFactory.register()`, `CFPFactory.create()`, etc.) la UI contempla:
-
-1. **Pendiente**: después de firmar en MetaMask, antes de `tx.wait()`. Se muestra el tx hash.
-2. **Confirmada**: después de `tx.wait()` exitoso. Se actualiza el estado del creador.
-3. **Fallida/revertida**: si MetaMask rechaza o la tx revierte, se captura en `catch` y se muestra el error.
-
-## Flujos de Etapa 3
-
-### Presentación de propuesta (anónima, sin MetaMask)
-
-Cualquier usuario puede presentar una propuesta para un llamado:
-
-| Paso | Acción | Componente |
-|------|--------|------------|
-| 1 | Seleccionar llamado abierto | `PublicView.vue` |
-| 2 | Ingresar título, descripción y archivos | `ProposalSubmit.vue` |
-| 3 | El navegador calcula hashes keccak256 localmente (FileReader) | `ProposalSubmit.vue` |
-| 4 | Enviar solo los hashes a la API (`POST /register-proposal`) | `ProposalSubmit.vue` vía `useApi.js` |
-| 5 | La API registra el compromiso on-chain y devuelve recibo (`proposalId` + pruebas Merkle) | API |
-| 6 | Descargar recibo JSON verificable | `ProposalSubmit.vue` |
-
-### Verificación de recibo
-
-El verificador acepta dos tipos de recibo:
-
-**Recibo de propuesta** (de `POST /register-proposal`):
-| Paso | Acción | Componente |
-|------|--------|------------|
-| 1 | Cargar recibo JSON descargado | `ReceiptVerifier.vue` |
-| 2 | Verificar pruebas Merkle contra `proposalId` vía API (`POST /verify-proof`) | `ReceiptVerifier.vue` vía `useApi.js` |
-| 3 | (Opcional) Consultar `CFP.proposalData(proposalId)` on-chain con MetaMask | `ReceiptVerifier.vue` |
-
-**Recibo de entrega** (de `POST /deliver`, contiene `txHash` y `filesRoot`):
-| Paso | Acción | Componente |
-|------|--------|------------|
-| 1 | Cargar archivo JSON de recibo de entrega | `ReceiptVerifier.vue` |
-| 2 | Consultar `CFP.deliveryData(proposalId)` on-chain con MetaMask | `ReceiptVerifier.vue` |
-| 3 | Verificar que `delivered` sea `true` y que `filesRoot` coincida | `ReceiptVerifier.vue` |
-
-### Entrega post-cierre
-
-Una vez cerrado el llamado, el oferente entrega los archivos físicos:
-
-| Paso | Acción | Componente |
-|------|--------|------------|
-| 1 | Cargar recibo original + todos los archivos comprometidos | `PostClosingDelivery.vue` |
-| 2 | Enviar a `POST /deliver` como `multipart/form-data` | `PostClosingDelivery.vue` vía `useApi.js` |
-| 3 | La API verifica hashes contra el recibo y registra `registerDelivery()` on-chain | API |
-| 4 | La API almacena archivos en disco y actualiza DB | API |
-| 5 | Confirmación de entrega exitosa (muestra `proposalId`, `filesRoot`, `txHash` y `blockNumber`) | `PostClosingDelivery.vue` |
-| 6 | Descargar recibo de entrega JSON para verificación posterior | `PostClosingDelivery.vue` |
-
-### Consulta pública de entregas
-
-| Operación | Tipo | Endpoint/Método | Componente |
-|-----------|------|-----------------|------------|
-| Ver datos de entrega | API (GET) | `/deliveries/<proposal_id>` | `PublicView.vue` |
-| Descargar archivo | API (GET) | `/deliveries/<proposal_id>/files/<hash>` | `PublicView.vue` |
+| Metodo | Endpoint | Proposito |
+|--------|----------|-----------|
+| getEnsRegistry | GET /ens/registry | Obtener direccion del registry ENS |
+| postEnsResolve | POST /ens/resolve | Resolver nombre ENS a direccion |
+| postEnsReverse | POST /ens/reverse | Resolucion inversa |
+| getTokenAddress | GET /token/address | Obtener direccion del token |
+| getTokenName | GET /token/name | Obtener nombre, simbolo, decimals |
+| getTokenBalance | GET /token/balance/:addr | Obtener balance de tokens |
+| getCallGuarantee | GET /calls/:id/guarantee | Info de garantia de un llamado |
+| postCreateCall | POST /create | Crear llamado (acepta guaranteeAmount y ensName) |
 
 ## Pruebas
 
 ```bash
-cd TP/10/web
+cd TP/Final/web
 npx vitest run
 ```
 
-Usan `vi.mock()` para simular la API (`useApi.js`) y `@vue/test-utils` para montar componentes. Entorno jsdom.
+## Mapeo endpoint/metodo por flujo (TP Final)
 
-## Mapeo endpoint/método por flujo (Etapa 2 y 3)
-
-| Pantalla | Endpoint API | Método/Evento Contrato |
-|----------|-------------|----------------------|
-| `PublicView.vue` (creadores) | `GET /creators` | — |
-| `PublicView.vue` (llamados) | `GET /calls`, `GET /calls?creator=0x...` | `CFPFactory.calls()`, `CFPFactory.createdByCount()` |
-| `PublicView.vue` (propuesta) | — | Botón abre `ProposalSubmit.vue` |
-| `PublicView.vue` (entrega) | — | Botón abre `PostClosingDelivery.vue` (solo cerrados) |
-| `PublicView.vue` (ver entregas por llamado) | `GET /calls/<call_id>/deliveries` | — |
-| `PublicView.vue` (descargar archivo) | `GET /deliveries/.../files/<hash>` | — |
-| `CreatorPanel.vue` (registro) | `POST /register` | `CFPFactory.register()` (tx MetaMask) |
-| `CreatorPanel.vue` (estado) | `GET /registrations/:address` | `CFPFactory.isRegistered()`, `CFPFactory.isAuthorized()` |
-| `CreatorPanel.vue` (perfil) | `PATCH /registrations/:address` | — |
-| `CreatorPanel.vue` (crear llamado) | `POST /create` | `CFPFactory.create(callId, closingTime)` (tx MetaMask) |
-| `AdminPanel.vue` | `GET /admin/address`, `GET /admin/nonce`, `GET /admin/pending` | `CFPFactory.owner()`, `CFPFactory.getAllPending()` |
-| `AdminPanel.vue` (autorizar) | `POST /authorize/:address` | — |
-| `AdminPanel.vue` (desautorizar) | `POST /unauthorize/:address` | — |
-| `ProposalSubmit.vue` | `POST /register-proposal` | `CFPFactory.registerProposal()` (API firma con server_account) |
-| `ReceiptVerifier.vue` | `POST /verify-proof` | `CFP.proposalData(proposalId)` (lectura on-chain opcional con MetaMask) |
-| `PostClosingDelivery.vue` | `POST /deliver` | `CFP.registerDelivery()` (API firma con server_account) |
-
-## Configuración del proxy
-
-En `vite.config.js` se define:
-
-```js
-server: {
-  proxy: {
-    '/api': {
-      target: 'http://127.0.0.1:5000',
-      changeOrigin: true,
-      rewrite: (path) => path.replace(/^\/api/, ''),
-    },
-  },
-}
-```
-
-El frontend llama a `/api/creators`, `/api/register`, etc. Vite reenvía a `http://127.0.0.1:5000/creators`, `http://127.0.0.1:5000/register`.
+| Componente | Endpoint API | Metodo/Evento Contrato |
+|------------|-------------|----------------------|
+| EnsPanel | GET /ens/registry, POST /ens/resolve, POST /ens/reverse | — |
+| TokenPanel | GET /token/address, GET /token/name, GET /token/balance/:addr | CFPGovernanceToken.buy(), redeem() |
+| GuaranteePanel | GET /calls/:id/guarantee | CFP.finalize(), CFP.claimRefund() |
+| CreatorPanel (crear) | POST /create (con guaranteeAmount, ensName) | CFPFactory.create(callId, ts, guaranteeAmount) |
+| ProposalSubmit | POST /register-proposal | CFPFactory.registerProposal() o CFP.registerProposalWithCollateral() |
+| PublicView | GET /calls | — |

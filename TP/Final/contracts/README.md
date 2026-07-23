@@ -1,352 +1,200 @@
-# Trabajo Práctico 10 - Smart contracts
+# TP Final - Smart contracts
 
-El trabajo consiste en implementar dos contratos. El contrato `CFP` implementa un llamado a presentación de propuestas (*Call For Proposals*). Una propuesta está representada por el *hash* de un documento, que es registrada en el contrato antes de la fecha de cierre del llamado.
-
-El contrato `CFPFactory` implementa una factoría que crea instancias del contrato `CFP`.
-
-A los efectos de poder probar este práctico, deberán prever un mecanismo de despliegue en un nodo local (desplegado por ejemplo con `npx hardhat node`). El mecanismo de despliegue puede ser mediante `ignition` o un script *ad hoc*.
+El proyecto extiende los contratos del TP 10 con tres nuevas funcionalidades:
+ENS (Ethereum Name Service), Token ERC-20 de gobernanza, y garantia de oferta
+con devolucion mediante mecanismo pull.
 
 ## Contratos
 
-### `CFP`
+### Contratos nuevos (TP Final)
 
-#### Tipos de datos
+#### `ENSRegistry.sol`
 
-La estructura `ProposalData` representa una propuesta, y almacena la dirección del autor de la propuesta (`sender`), el número de bloque y el `timestamp` en el que la propuesta fue registrada.
+Registro central ENS (EIP-137). Mapea nodos (namehash) a propietario, resolutor
+y TTL. El nodo raiz (bytes32(0)) pertenece al deployer.
 
-```solidity
-struct ProposalData {
-    address sender;
-    uint blockNumber;
-    uint timestamp;
-}
-```
+Constructor sin argumentos. El deployer es dueno del nodo raiz.
 
-#### Eventos
+Eventos: `NewOwner`, `Transfer`, `NewResolver`, `NewTTL`, `ApprovalForAll`.
 
-El evento `ProposalRegistered` se emite al momento de registrarse una propuesta.
+#### `FIFSRegistrar.sol`
 
-```solidity
-event ProposalRegistered(bytes32 proposal, address sender, uint blockNumber);
-```
+Registrador FIFS (First In First Served) para un dominio especifico. Gestiona
+los subnodos de un nodo padre en el registro ENS. El primer usuario en registrar
+un nombre lo obtiene.
 
-#### Constructor
+Constructor: `FIFSRegistrar(ENSRegistry _registry, bytes32 _rootNode)`.
 
-El constructor recibe dos argumentos: un identificador del llamado, del tipo `bytes32`, y un `timestamp` de tipo `uint` que establece el tiempo de cierre de la convocatoria. Si ese timestamp es menor o igual al del bloque actual, la acción se revierte con el mensaje "El cierre de la convocatoria no puede estar en el pasado".
+Funcion publica: `register(bytes32 label, address newOwner)` - registra un
+subdominio bajo el TLD gestionado. Falla si el nombre ya pertenece a otra cuenta.
 
-#### Funciones informativas
+Se despliega una instancia para `usuarios.cfp`. Los usuarios se registran a si
+mismos via MetaMask llamando a `register(keccak256("sunombre"), suDireccion)`.
 
-Las funciones especificadas a continuación pueden implementarse en forma explícita, o como consecuencia de la definición de una variable de estado pública con el nombre adecuado.
+#### `PublicResolver.sol`
 
-##### `proposalData(bytes32 proposal)`
+Resolutor de registros ENS que implementa:
+- `IAddrResolver`: `addr(bytes32 node)` / `setAddr(bytes32 node, address addr)`
+- `ITextResolver`: `text(bytes32 node, string key)` / `setText(...)`
+- `INameResolver`: `name(bytes32 node)` / `setName(bytes32 node, string name)`
+- `supportsInterface(bytes4)` (EIP-165)
 
-* Devuelve una estructura de tipo `ProposalData`, asociada con la propuesta `proposal`.
+Constructor: `PublicResolver(ENSRegistry _registry)`.
 
-##### `proposalCount()`
+Autorizacion: solo el dueno del nodo en el registry (o un operador aprobado)
+puede modificar sus registros.
 
-* Devuelve la cantidad de propuestas presentadas.
+#### `ReverseRegistrar.sol`
 
-##### `proposals(uint index)`
+Gestiona la resolucion inversa (direccion a nombre). Permite que cualquier
+cuenta configure su nombre reverso en `addr.reverse`.
 
-* Devuelve la propuesta que está en la posición `index` de la lista.
+Constructor: `ReverseRegistrar(ENSRegistry _registry)`.
 
-##### `closingTime()`
+Funciones publicas:
+- `setName(string name)`:configura la resolucion inversa de `msg.sender`
+- `setDefaultResolver(address resolver)`:solo owner, establece el resolutor
+por defecto para nuevos registros
 
-* Devuelve el `timestamp` correspondiente al cierre del llamado.
+#### `CFPGovernanceToken.sol`
 
-##### `callId()`
+Token ERC-20 con funcionalidad de compra y redencion contra ETH a precio fijo.
+Extiende `ERC20` + `Ownable` de OpenZeppelin v5.
 
-* Devuelve el identificador de este llamado.
+Constructor: `CFPGovernanceToken(uint256 _tokensPerEth)` - acuna 1M tokens
+para el deployer.
 
-##### `creator()`
+Funciones publicas:
+- `buy()`: payable, acuna `msg.value * tokensPerEth` tokens al sender
+- `redeem(uint256 amount)`: quema tokens del sender y le devuelve
+`amount / tokensPerEth` ETH
+- `withdraw(address to)`: solo owner, retira el ETH acumulado en el contrato
+- `tokensPerEth()`: view, devuelve la tasa de conversion
 
-* Devuelve la dirección del creador de este contrato.
+### Contratos modificados (vs TP 10)
 
-##### `proposalTimestamp(bytes32 proposal)`
+#### `CFPFactory.sol`
 
-* Devuelve el `timestamp` en el que se ha registrado una propuesta. Si la propuesta no está registrada devuelve cero.
-
-#### Transacciones
-
-##### `registerProposal(bytes32 proposal)`
-
-* Permite registrar una propuesta, expresada como un argumento de tipo `bytes32`.
-* Registra al emisor del mensaje como emisor de la propuesta.
-* Si el timestamp del bloque actual es mayor que el del cierre del llamado, revierte con el error "Convocatoria cerrada".
-* Si ya se ha registrado una propuesta igual, revierte con el mensaje "La propuesta ya ha sido registrada".
-* Emite el evento `ProposalRegistered`.
-
-##### `registerProposalFor(bytes32 proposal, address sender)`
-
-* Permite registrar una propuesta especificando un emisor.
-* Sólo puede ser ejecutada por el creador del llamado. Si no es así, revierte con el mensaje "Solo el creador puede hacer esta llamada".
-* Si el timestamp del bloque actual es mayor que el del cierre del llamado, revierte con el error "Convocatoria cerrada".
-* Si ya se ha registrado una propuesta igual, revierte con el mensaje "La propuesta ya ha sido registrada"
-* Emite el evento `ProposalRegistered`
-
-#### Errores
-
-##### `La propuesta ya ha sido registrada`
-
-Ocurre cuando se intenta registrar una propuesta que ha sido registrada previamente.
-
-##### `El cierre de la convocatoria no puede estar en el pasado`
-
-Ocurre cuando se intenta crear un llamado con fecha de cierre igual o anterior al `timestamp` del bloque actual.
-
-##### `Convocatoria cerrada`
-
-Ocurre cuando se intenta registrar una propuesta luego del cierre de la convocatoria.
-
-##### `Solo el creador puede hacer esta llamada`
-
-Ocurre cuando alguien que no es el creador de la llamada intenta ejecutar una función reservada para el creador.
-
-### `CFPFactory`
-
-#### Tipos de datos
-
-La estructura `CallForProposals` representa un llamado, y almacena la dirección del creador y la dirección del nuevo contrato creado.
+El constructor ahora recibe la direccion del token ERC-20 como parametro
+inmutable:
 
 ```solidity
-struct CallForProposals {
-    address creator;
-    CFP cfp;
-}
+constructor(CFPGovernanceToken _token)
 ```
 
-#### Eventos
-
-El evento `CFPCreated` se emite cuando se crea un nuevo contrato.
+`create()` y `createFor()` ahora reciben un tercer parametro `guaranteeAmount`:
 
 ```solidity
-event CFPCreated(address creator, bytes32 callId, CFP cfp);
+function create(bytes32 callId, uint256 timestamp, uint256 guaranteeAmount)
+    public returns (CFP)
 ```
 
-El evento `CreatorRegistered` se emite cuando una cuenta se registra mediante `register()`.
+Nueva funcion view:
+- `token() -> address`:devuelve la direccion del token ERC-20
+
+El evento `CFPCreated` ahora incluye `guaranteeAmount` como cuarto argumento:
+`CFPCreated(address creator, bytes32 callId, CFP cfp, uint256 guaranteeAmount)`.
+
+#### `CFP.sol`
+
+Constructor modificado:
 
 ```solidity
-event CreatorRegistered(address indexed creator);
+constructor(
+    bytes32 callId_,
+    uint256 closingTime_,
+    uint256 guaranteeAmount_,
+    IERC20 token_,
+    address creator_
+)
 ```
 
-El evento `CreatorAuthorized` se emite cuando el dueño autoriza a una cuenta mediante `authorize()`.
+Nuevas variables de estado:
+- `guaranteeAmount` (uint256 immutable): monto de garantia requerido (0 = sin garantia)
+- `token` (IERC20 immutable): direccion del token ERC-20
+- `finalized` (bool): indica si el creador finalizo el proceso
+- `refundClaimed` (mapping): evita reembolsos duplicados
+- `acceptedProposals` (bytes32[]): propuestas aceptadas por el creador al finalizar
 
-```solidity
-event CreatorAuthorized(address indexed creator);
+Nuevas funciones:
+- `registerProposalWithCollateral(bytes32 proposal)`: registra una propuesta
+transfiriendo `guaranteeAmount` tokens del proponente al contrato via
+`transferFrom`. Requiere approve previo del proponente.
+- `finalize(bytes32[] calldata _acceptedProposals)`: solo el creador, marca el
+llamado como finalizado y guarda la lista de propuestas aceptadas. Habilita
+la devolucion de garantias para las no aceptadas.
+- `claimRefund(bytes32 proposal)`: permite a un proponente recuperar su garantia
+si su propuesta NO esta en `acceptedProposals`. Mecanismo pull.
+- `isProposalAccepted(bytes32 proposal) -> bool`: view, verifica si una propuesta
+esta en la lista de aceptadas.
+- `guaranteeAmount() -> uint256`: view (autogenerado por immutable)
+- `token() -> address`: view (autogenerado por immutable)
+- `finalized() -> bool`: view (autogenerado por public)
+
+## Arbol ENS
+
+El sistema ENS se organiza asi:
+
+```
+cfp                     ← deployer (owner del CFPFactory)
+├── usuarios.cfp        ← FIFSRegistrar (autoregistro de usuarios)
+│   └── <nombre>.usuarios.cfp  ← registrado por el usuario via MetaMask
+├── llamados.cfp        ← deployer (la API registra nombres de llamados)
+│   └── <nombre>.llamados.cfp  ← registrado por la API al crear el llamado
+└── addr.reverse        ← ReverseRegistrar
+    └── <addr>.addr.reverse    ← configurado por el usuario via setName()
 ```
 
-El evento `CreatorUnauthorized` se emite cuando el dueño revoca la autorización de una cuenta mediante `unauthorize()`.
+## Orden de despliegue
 
-```solidity
-event CreatorUnauthorized(address indexed creator);
+1. ENSRegistry
+2. PublicResolver (toma direccion del registry)
+3. ReverseRegistrar
+4. Crear nodo `cfp` como subnodo de la raiz
+5. Crear `reverse` y `addr.reverse`
+6. FIFSRegistrar para `usuarios.cfp`
+7. Asignar `usuarios.cfp` al FIFSRegistrar
+8. Crear `llamados.cfp` (owner = deployer)
+9. Configurar resolvers del arbol ENS
+10. CFPGovernanceToken
+11. CFPFactory (toma direccion del token)
+
+El script `scripts/deploy.js` ejecuta estos pasos e imprime las variables
+de entorno necesarias.
+
+## Variables de entorno emitidas en despliegue
+
+| Variable | Descripcion |
+|----------|-------------|
+| CFP_MNEMONIC | Mnemonico BIP39 del owner |
+| CFP_FACTORY_ADDRESS | Direccion del CFPFactory |
+| CFP_ADMIN_ADDRESS | Direccion de la cuenta administradora |
+| CFP_ENS_REGISTRY | Direccion del ENSRegistry |
+| CFP_ERC20_TOKEN | Direccion del CFPGovernanceToken |
+| CFP_METAMASK_MNEMONIC | Mnemonico para importar en MetaMask |
+
+## Tests
+
+Ejecutar con `npx hardhat test` o `npm test`.
+
+Total: 68 tests. Cubren inicializacion de CFP y CFPFactory, registro de
+propuestas (registerProposal, registerProposalFor), cierre de convocatoria,
+entrega de archivos post-cierre, gestion de creadores, autorizacion, y
+verificacion de eventos.
+
+Los tests de las funcionalidades nuevas (ENS, Token, Garantia) estan
+pendientes de implementacion.
+
+## Comandos
+
+```bash
+npm install
+npm run compile
+npm run deploy          # Despliega en localhost:8545
+npm test               # Ejecuta tests
 ```
 
-#### Constructor
+## Decisiones de diseño
 
-El constructor no recibe argumentos y simplemente registra al emisor como dueño de la factoría.
-
-#### Funciones informativas
-
-##### `owner()`
-
-* Devuelve la dirección del dueño de la factoría
-
-##### `calls(bytes32 callId)`
-
-* Devuelve una estructura de tipo `CallForProposals` con la información asociada con el argumento `callId`.
-
-##### `creatorsCount()`
-
-* Devuelve la cantidad de cuentas que han creado llamados.
-
-##### `creators(uint index)`
-
-* Devuelve la dirección del creador en la posición `index`.
-
-##### `createdByCount(address creator)`
-
-* Devuelve la cantidad de contratos creados por un cierto creador.
-
-##### `createdBy(address creator, uint index)`
-
-* Devuelve el identificador del contrato que se encuentra en la posición `index` de la lista de contratos creados por `creator`.
-
-##### `pendingCount()`
-
-* Devuelve la cantidad de cuentas que se han registrado para crear llamados y que no han sido autorizadas o desautorizadas aún.
-* Sólo puede ser invocada por el dueño de la factoría.
-* Si es ejecutada por otro usuario, revierte con el mensaje "Solo el creador puede hacer esta llamada"
-
-##### `getPending(uint index)`
-
-* Devuelve la dirección que está en la posición `index` de la lista de pendientes de autorización.
-* Sólo puede ser invocada por el dueño de la factoría.
-* Si es ejecutada por otro usuario, revierte con el mensaje "Solo el creador puede hacer esta llamada"
-
-##### `getAllPending()`
-
-* Devuelve la lista de todas las direcciones pendientes de autorización.
-* Sólo puede ser invocada por el dueño de la factoría.
-* Si es ejecutada por otro usuario, revierte con el mensaje "Solo el creador puede hacer esta llamada"
-
-##### `isRegistered(address account)`
-
-* Devuelve verdadero si la cuenta provista como argumento está actualmente pendiente de autorización o ya fue autorizada. Devuelve `false` para cuentas que nunca se han registrado o que han sido desautorizadas (la desautorización elimina completamente el estado de registro en el contrato).
-
-##### `isAuthorized(address account)`
-
-* Devuelve verdadero si la cuenta provista como argumento está autorizada para crear llamados.
-
-#### Transacciones
-
-##### `create(bytes32 callId, uint timestamp) public returns (CFP)`
-
-* Crea un llamado, con un identificador y un tiempo de cierre.
-* Si ya existe un llamado con ese identificador, revierte con el mensaje de error "El llamado ya existe".
-* Si el emisor no está autorizado a crear llamados, revierte con el mensaje "No autorizado".
-* Emite el evento `CFPCreated`.
-
-##### `createFor(bytes32 callId, uint timestamp, address creator) public returns (CFP)`
-
-* Crea un llamado, estableciendo a `creator` como creador del mismo.
-* Sólo puede ser invocada por el dueño de la factoría.
-* En caso contrario revierte con el mensaje "Solo el creador puede hacer esta llamada".
-* Se comporta en todos los demás aspectos como `create(bytes32 callId, uint timestamp)`, incluyendo la emisión del evento `CFPCreated`.
-
-##### `register()`
-
-* Permite que una cuenta se registre para poder crear llamados.
-* El registro queda en estado pendiente hasta que el dueño de la factoría lo autorice.
-* Si ya se ha registrado, revierte con el mensaje "Ya se ha registrado".
-* Emite el evento `CreatorRegistered`.
-
-##### `registerProposal(bytes32 callId, bytes32 proposal)`
-
-* Permite a un usuario registrar una propuesta, para un llamado con identificador `callId`.
-* Si el llamado no existe, revierte con el mensaje  "El llamado no existe".
-* Registra la propuesta en el llamado asociado con `callId` y pasa como creador la dirección del emisor del mensaje.
-
-##### `authorize(address creator)`
-
-* Autoriza a una cuenta a crear llamados.
-* Sólo puede ser ejecutada por el dueño de la factoría.
-* En caso contrario revierte con el mensaje "Solo el creador puede hacer esta llamada".
-* Si la cuenta se ha registrado y está pendiente, la quita de la lista de pendientes.
-* Emite el evento `CreatorAuthorized`.
-* Emite el evento `CreatorAuthorized`
-
-##### `unauthorize(address creator)`
-
-* Quita la autorización de una cuenta para crear llamados.
-* Sólo puede ser ejecutada por el dueño de la factoría.
-* En caso contrario revierte con el mensaje "Solo el creador puede hacer esta llamada".
-* Elimina completamente el estado de registro de la cuenta: tras la desautorización, tanto `isRegistered(creator)` como `isAuthorized(creator)` devuelven `false`.
-* Si la cuenta se ha registrado y está pendiente, la quita de la lista de pendientes.
-* Para volver a crear llamados, la cuenta debe registrarse nuevamente mediante `register()`.
-* Emite el evento `CreatorUnauthorized`.
-
-#### Errores
-
-##### `Solo el creador puede hacer esta llamada`
-
-Ocurre cuando alguien que no es el creador de la llamada intenta ejecutar una función reservada para el creador.
-
-##### `El llamado ya existe`
-
-Ocurre cuando se intenta crear un llamado con el mismo `callId` que uno existente.
-
-##### `El llamado no existe`
-
-Ocurre cuando se intenta registrar una propuesta asociada con un `callId` inexistente.
-
-##### `No autorizado`
-
-Ocurre cuando una cuenta no autorizada intenta crear un llamado.
-
-##### `Ya se ha registrado`
-
-Ocurre cuando una cuenta registrada intenta registrarse nuevamente.
-
-## Diferencias con el Práctico 7
-
-El contrato `CFPFactory` incorpora tres eventos que no estaban presentes en el Práctico 7:
-
-* `CreatorRegistered(address indexed creator)`: se emite cuando una cuenta llama a `register()` para solicitar autorización.
-* `CreatorAuthorized(address indexed creator)`: se emite cuando el dueño de la factoría autoriza a una cuenta mediante `authorize()`.
-* `CreatorUnauthorized(address indexed creator)`: se emite cuando el dueño de la factoría revoca la autorización de una cuenta mediante `unauthorize()`.
-
-## Diferencias con el Práctico 9
-
-Para el Práctico 10 se agregaron al contrato `CFP` los siguientes elementos para soportar la entrega de archivos post-cierre.
-
-### `DeliveryData` (nuevo struct)
-
-Estructura que representa la entrega de archivos asociada a una propuesta:
-
-```solidity
-struct DeliveryData {
-    bytes32 filesRoot;      // raíz del árbol de Merkle de los archivos entregados
-    address sender;          // dirección del emisor de la entrega
-    uint256 blockNumber;     // bloque en el que se registró la entrega
-    uint256 timestamp;       // timestamp del registro
-    bool delivered;          // bandera que indica si la entrega fue realizada
-}
-```
-
-### `FilesDelivered` (nuevo evento)
-
-Se emite cuando se registra exitosamente una entrega de archivos:
-
-```solidity
-event FilesDelivered(bytes32 indexed proposalId, bytes32 filesRoot, address sender, uint256 timestamp);
-```
-
-### `registerDelivery(bytes32 proposalId, bytes32 filesRoot)` (nuevo método público)
-
-Permite registrar en cadena la entrega final de archivos posterior al cierre del llamado.
-
-Restricciones:
-
-* La convocatoria debe haber cerrado (`block.timestamp > _closingTime`). Si no, revierte con "La convocatoria no ha cerrado".
-* La propuesta debe existir en el contrato (`proposalData[proposalId].blockNumber != 0`). Si no, revierte con "La propuesta no existe".
-* La entrega no debe haberse registrado previamente (`!_deliveries[proposalId].delivered`). Si ya existe, revierte con "La entrega ya fue registrada".
-
-Emite el evento `FilesDelivered`.
-
-### `deliveryData(bytes32 proposalId)` (nueva función view)
-
-Devuelve la estructura `DeliveryData` asociada a la propuesta. Si la propuesta no tiene entrega registrada, devuelve `DeliveryData` con `delivered == false`.
-
-### Decisiones de diseño
-
-* La estructura `DeliveryData` incluye un campo `filesRoot` (raíz Merkle) para que el servidor pueda verificar la integridad de los archivos entregados contra el compromiso original.
-* El sender de la entrega puede ser distinto del sender de la propuesta original (caso de entrega delegada por la API).
-* La bandera `delivered` permite distinguir entre una propuesta sin entrega (`delivered == false`) y una propuesta con entrega registrada. Sin esta bandera, un struct con todos sus campos en cero sería ambiguo.
-* Se usa `block.timestamp` en lugar de recibir un timestamp externo para garantizar integridad temporal on-chain.
-
-### Casos de prueba agregados (6 tests en `test/testCFP.js`)
-
-Los nuevos tests están en el bloque `"Entrega de archivos post-cierre"` dentro de `testCFP.js`:
-
-| Test | Descripción |
-|------|-------------|
-| `debe permitir registrar una entrega después del cierre` | Registra una propuesta, avanza el tiempo, llama a `registerDelivery` y verifica los campos de `DeliveryData` |
-| `debe emitir el evento FilesDelivered al registrar una entrega` | Verifica que el evento se emita con los argumentos correctos (proposalId, filesRoot, sender, timestamp) |
-| `debe rechazar la entrega si la convocatoria no ha cerrado` | Intenta registrar entrega antes del cierre; espera revert con "La convocatoria no ha cerrado" |
-| `debe rechazar la entrega si la propuesta no existe` | Intenta registrar entrega para un proposalId inexistente; espera revert con "La propuesta no existe" |
-| `debe rechazar la entrega duplicada` | Registra entrega dos veces para la misma propuesta; espera revert con "La entrega ya fue registrada" |
-| `debe devolver datos vacíos para una propuesta sin entrega` | Consulta `deliveryData()` para una propuesta sin entrega y verifica `delivered == false` y `blockNumber == 0` |
-
-Total: **79 tests** (48 de CFPFactory + 31 de CFP).
-
-### Script de despliegue (`scripts/deploy.js`)
-
-Cambios respecto al TP9:
-
-* **Exporta `deployments/CFPFactory.json`**: al desplegar, genera un archivo JSON con `address`, `chainId` y `abi` del contrato. La API y el frontend pueden leer este archivo para evitar direcciones hardcodeadas.
-* **Deriva la cuenta administradora**: imprime la dirección de la cuenta 0 (`m/44'/60'/0'/0/0`) de `CFP_METAMASK_MNEMONIC` como `CFP_ADMIN_ADDRESS`. Esta cuenta es distinta del owner on-chain y se usa para firmar operaciones administrativas desde MetaMask.
-* **Salida lista para exportar**: imprime los tres exports listos para copiar y pegar en la terminal de la API: `CFP_MNEMONIC`, `CFP_FACTORY_ADDRESS`, `CFP_ADMIN_ADDRESS`.
-
-### Paquetes y comandos
-
-Sin cambios respecto al TP9. Los comandos de compilación y tests son los mismos:
+Ver `docs/DECISIONES_DISENO.md` en la raiz del proyecto para la justificacion
+completa de todas las decisiones.
