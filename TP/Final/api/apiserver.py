@@ -48,6 +48,8 @@ app = Flask(__name__)
 MNEMONIC        = os.environ["CFP_MNEMONIC"]
 FACTORY_ADDRESS = os.environ["CFP_FACTORY_ADDRESS"]
 ADMIN_ADDRESS   = os.environ["CFP_ADMIN_ADDRESS"]
+ENS_REGISTRY    = os.environ.get("CFP_ENS_REGISTRY", "")
+ERC20_TOKEN     = os.environ.get("CFP_ERC20_TOKEN", "")
 RPC_URL         = os.environ.get("CFP_RPC_URL", "http://localhost:8545")
 CONTRACTS_DIR   = os.environ.get("CFP_CONTRACTS_DIR", "../contracts")
 CFP_DB_PATH     = os.environ.get("CFP_DB_PATH", "cfp.db")
@@ -112,6 +114,20 @@ if on_chain_owner.lower() != server_account.address.lower():
         "Verificá CFP_MNEMONIC y CFP_FACTORY_ADDRESS en las variables de entorno."
     )
 
+# Cargar ABIs de contratos ENS y Token
+ens_registry_abi   = load_abi("ENSRegistry") if ENS_REGISTRY else None
+token_abi          = load_abi("CFPGovernanceToken") if ERC20_TOKEN else None
+
+# Crear objetos contrato ENS y Token
+ens_contract = (
+    w3.eth.contract(address=Web3.to_checksum_address(ENS_REGISTRY), abi=ens_registry_abi)
+    if ENS_REGISTRY and ens_registry_abi else None
+)
+token_contract = (
+    w3.eth.contract(address=Web3.to_checksum_address(ERC20_TOKEN), abi=token_abi)
+    if ERC20_TOKEN and token_abi else None
+)
+
 # Base de datos y event listener para mantener la informacion de las propuestas
 # registrada en el servidor sin necesidad de consultar al nodo Ethereum cada vez.
 database.init_db()
@@ -120,7 +136,28 @@ try:
     w3.provider.make_request("evm_mine", [])
 except Exception:
     pass
-start_listener(cfp_factory, w3)
+def send_transaction(tx_function):
+    """
+    Construye, firma y envia una transaccion usando la cuenta del servidor.
+    Espera la confirmacion y devuelve el recibo.
+    """
+
+    # Estructurar la transaccion con los parametros necesarios
+    tx = tx_function.build_transaction({
+        'from':     server_account.address,
+        'nonce':    w3.eth.get_transaction_count(server_account.address),
+        'gasPrice': w3.eth.gas_price,
+        'chainId':  w3.eth.chain_id,
+    })
+
+    # Firmar la transaccion con la clave privada del servidor
+    signed = w3.eth.account.sign_transaction(tx, server_account.key)
+
+    # Enviar la transaccion al nodo y esperar la confirmacion
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    return w3.eth.wait_for_transaction_receipt(tx_hash)
+
+start_listener(cfp_factory, w3, send_transaction, ENS_REGISTRY, server_account.key.hex())
 
 # Patrones de validacion
 HASH_RE    = re.compile(r'^0x[0-9a-fA-F]{64}$')   # 32 bytes = 64 hex chars
@@ -195,27 +232,6 @@ def recover_typed_address(signable_message, signature: str) -> str:
         raise ValueError("Invalid signature length")
     return Account.recover_message(signable_message, signature=sig)
 
-def send_transaction(tx_function):
-    """
-    Construye, firma y envia una transaccion usando la cuenta del servidor.
-    Espera la confirmacion y devuelve el recibo.
-    """
-
-    # Estructurar la transaccion con los parametros necesarios
-    tx = tx_function.build_transaction({
-        'from':     server_account.address,
-        'nonce':    w3.eth.get_transaction_count(server_account.address),
-        'gasPrice': w3.eth.gas_price,
-        'chainId':  w3.eth.chain_id,
-    })
-
-    # Firmar la transaccion con la clave privada del servidor
-    signed = w3.eth.account.sign_transaction(tx, server_account.key)
-
-    # Enviar la transaccion al nodo y esperar la confirmacion
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    return w3.eth.wait_for_transaction_receipt(tx_hash)
-
 def get_cfp_contract(call_id_hex):
     """
     Dado un callId en hexadecimal, devuelve el objeto contrato CFP correspondiente.
@@ -229,6 +245,7 @@ def get_cfp_contract(call_id_hex):
     call_data = cfp_factory.functions.calls(call_id_bytes).call()
 
     # La direccion del contrato CFP esta en la posicion 1 del tuple devuelto por calls()
+    # (indices: 0=creator, 1=cfp, 2=guaranteeAmount)
     cfp_address = call_data[1]
     if cfp_address == ZERO:
         raise ValueError("No existe un contrato CFP para el callId proporcionado")
@@ -276,6 +293,48 @@ def err(msg, code):
     """
     return jsonify(message=msg), code
 
+# Helper ENS
+def _resolve_ens_reverse(address):
+    """Resuelve el nombre ENS inverso de una direccion. Retorna None si no hay."""
+    if not ens_contract or not address:
+        return None
+    try:
+        from eth_utils import keccak as eth_keccak
+        def _namehash(n):
+            node = b'\x00' * 32
+            if n:
+                labels = n.split(".")
+                for label in reversed(labels):
+                    node = eth_keccak(node + eth_keccak(text=label))
+            return node
+
+        addr_clean = address[2:].lower() if address.startswith("0x") else address.lower()
+        reverse_name = f"{addr_clean}.addr.reverse"
+        node = _namehash(reverse_name)
+
+        resolver_addr = ens_contract.functions.resolver(node).call()
+        if resolver_addr == ZERO:
+            return None
+
+        resolver_abi = load_abi("PublicResolver")
+        resolver = w3.eth.contract(address=resolver_addr, abi=resolver_abi)
+        resolved_name = resolver.functions.name(node).call()
+        if not resolved_name:
+            return None
+
+        # Verificacion forward: el nombre debe resolver a la direccion original
+        fwd_node = _namehash(resolved_name)
+        fwd_resolver_addr = ens_contract.functions.resolver(fwd_node).call()
+        if fwd_resolver_addr != ZERO:
+            fwd_resolver = w3.eth.contract(address=fwd_resolver_addr, abi=resolver_abi)
+            fwd_addr = fwd_resolver.functions.addr(fwd_node).call()
+            if fwd_addr.lower() == address.lower():
+                return resolved_name
+
+        return resolved_name
+    except Exception:
+        return None
+
 # ----- Endpoints de solo lectura (GET) -----
 
 @app.get("/calls")
@@ -284,7 +343,30 @@ def list_calls():
     creator = request.args.get("creator", None)
     try:
         calls = database.get_all_calls(creator)
+        # Resolver ENS para cada creador unico
+        creator_cache = {}
+        for c in calls:
+            addr = c.get("creator")
+            if addr and addr not in creator_cache:
+                creator_cache[addr] = _resolve_ens_reverse(addr) or addr
+            c["creator_ens"] = creator_cache.get(addr, addr) if addr else addr
         return jsonify(calls=calls)
+    except Exception:
+        return err(messages.INTERNAL_ERROR, 500)
+
+
+@app.get("/proposals")
+def list_proposals():
+    """Devuelve propuestas. Filtro opcional ?proponent=0x..."""
+    proponent = request.args.get("proponent", None)
+    try:
+        if proponent:
+            if not is_valid_address(proponent):
+                return err(messages.INVALID_ADDRESS, 400)
+            proposals = database.get_proposals_by_proponent(proponent)
+        else:
+            return err(messages.MISSING_FIELD, 400)
+        return jsonify(proposals=proposals)
     except Exception:
         return err(messages.INTERNAL_ERROR, 500)
 
@@ -333,19 +415,21 @@ def calls(call_id):
         call = database.get_call(call_id)
         if not call:
             return err(messages.CALLID_NOT_FOUND, 404)
-        if call["status"] == "pending":
-            return jsonify(
-                title       =call["title"],
-                description =call["description"],
-                status      ="pending"
-            )
-        return jsonify(
-            creator     =call["creator"],
-            cfp         = call["cfp_address"],
-            title       =call["title"],
-            description =call["description"],
-            status      =call["status"]
-        )
+        response = {
+            "title":       call["title"],
+            "description": call["description"],
+            "status":      call["status"],
+            "guaranteeAmount": call["guarantee_amount"],
+            "ens_name":    call.get("ens_name"),
+        }
+        if call["status"] != "pending":
+            creator_ens = _resolve_ens_reverse(call["creator"]) if call["creator"] else None
+            response.update({
+                "creator": call["creator"],
+                "creator_ens": creator_ens or call["creator"],
+                "cfp":     call["cfp_address"],
+            })
+        return jsonify(response)
     except Exception:
         return err(messages.INTERNAL_ERROR, 500)
 
@@ -469,8 +553,10 @@ def creators():
         result = []
         for reg in registrations:
             status = compute_registration_status(reg["address"], True)
+            ens = _resolve_ens_reverse(reg["address"])
             result.append({
                 "address": reg["address"],
+                "ens": ens or reg["address"],
                 "name": reg["name"],
                 "nonce": reg["nonce"],
                 "status": status
@@ -618,6 +704,187 @@ def download_file(proposal_id, file_hash):
             
     return err(messages.NOT_FOUND, 404)
 
+# ----- Endpoints de Token -----
+
+@app.get("/token/address")
+def token_address():
+    """Devuelve la direccion del token ERC-20."""
+    if not token_contract:
+        return err("Token no configurado", 404)
+    return jsonify(address=ERC20_TOKEN)
+
+@app.get("/token/balance/<address>")
+def token_balance(address):
+    """Devuelve el balance de tokens de una direccion."""
+    if not is_valid_address(address):
+        return err(messages.INVALID_ADDRESS, 400)
+    if not token_contract:
+        return err("Token no configurado", 404)
+    try:
+        balance = token_contract.functions.balanceOf(
+            Web3.to_checksum_address(address)
+        ).call()
+        return jsonify(balance=str(balance))
+    except Exception:
+        return err(messages.INTERNAL_ERROR, 500)
+
+@app.get("/token/name")
+def token_name():
+    """Devuelve el nombre y simbolo del token."""
+    if not token_contract:
+        return err("Token no configurado", 404)
+    try:
+        name = token_contract.functions.name().call()
+        symbol = token_contract.functions.symbol().call()
+        decimals = token_contract.functions.decimals().call()
+        tokens_per_eth = token_contract.functions.tokensPerEth().call()
+        return jsonify(name=name, symbol=symbol, decimals=decimals, tokensPerEth=str(tokens_per_eth))
+    except Exception:
+        return err(messages.INTERNAL_ERROR, 500)
+
+# ----- Endpoints ENS -----
+
+@app.get("/ens/registry")
+def ens_registry():
+    """Devuelve la direccion del registry ENS."""
+    if not ens_contract:
+        return err("ENS no configurado", 404)
+    return jsonify(address=ENS_REGISTRY)
+
+@app.get("/ens/addresses")
+def ens_addresses():
+    """Devuelve las direcciones de todos los contratos ENS."""
+    if not ens_contract:
+        return err("ENS no configurado", 404)
+    try:
+        from eth_utils import keccak as eth_keccak
+        def _namehash(name):
+            node = b'\x00' * 32
+            if name:
+                labels = name.split(".")
+                for label in reversed(labels):
+                    node = eth_keccak(node + eth_keccak(text=label))
+            return node
+
+        registrar_addr = ens_contract.functions.owner(_namehash("usuarios.cfp")).call()
+        resolver_addr = ens_contract.functions.resolver(_namehash("usuarios.cfp")).call()
+        reverse_addr = ens_contract.functions.owner(_namehash("addr.reverse")).call()
+
+        return jsonify(
+            registry=ENS_REGISTRY,
+            registrar=registrar_addr,
+            resolver=resolver_addr,
+            reverseRegistrar=reverse_addr,
+        )
+    except Exception:
+        return err(messages.INTERNAL_ERROR, 500)
+
+@app.post("/ens/resolve")
+def ens_resolve():
+    """Resuelve nombre ENS a direccion usando PublicResolver."""
+    if not ens_contract:
+        return err("ENS no configurado", 404)
+    req = check_mimetype()
+    if req is None:
+        return err(messages.INVALID_MIMETYPE, 400)
+    name = req.get("name")
+    if not name:
+        return err(messages.MISSING_FIELD, 400)
+
+    try:
+        from eth_utils import to_bytes, keccak
+        def namehash(name):
+            node = b'\x00' * 32
+            if name:
+                labels = name.split(".")
+                for label in reversed(labels):
+                    node = keccak(node + keccak(text=label))
+            return node
+
+        node = namehash(name)
+
+        # Consultar resolver desde el registry
+        resolver_addr = ens_contract.functions.resolver(node).call()
+        if resolver_addr == ZERO:
+            return err(messages.ENS_NAME_NOT_FOUND, 404)
+
+        # Llamar addr() al resolver
+        resolver_abi = load_abi("PublicResolver")
+        resolver = w3.eth.contract(address=resolver_addr, abi=resolver_abi)
+        resolved = resolver.functions.addr(node).call()
+        if resolved == ZERO:
+            return err(messages.ENS_NAME_NOT_FOUND, 404)
+
+        return jsonify(address=resolved, name=name)
+    except Exception:
+        return err(messages.INTERNAL_ERROR, 500)
+
+@app.post("/ens/reverse")
+def ens_reverse():
+    """Resuelve una direccion a nombre ENS (resolucion inversa)."""
+    if not ens_contract:
+        return err("ENS no configurado", 404)
+    req = check_mimetype()
+    if req is None:
+        return err(messages.INVALID_MIMETYPE, 400)
+    address = req.get("address")
+    if not address or not is_valid_address(address):
+        return err(messages.INVALID_ADDRESS, 400)
+
+    try:
+        from eth_utils import to_bytes, keccak
+        def namehash(name):
+            node = b'\x00' * 32
+            if name:
+                labels = name.split(".")
+                for label in reversed(labels):
+                    node = keccak(node + keccak(text=label))
+            return node
+
+        # reverse node = namehash(address + ".addr.reverse")
+        addr_clean = address[2:].lower()
+        reverse_name = f"{addr_clean}.addr.reverse"
+        node = namehash(reverse_name)
+
+        resolver_addr = ens_contract.functions.resolver(node).call()
+        if resolver_addr == ZERO:
+            return err(messages.ENS_ADDRESS_NOT_FOUND, 404)
+
+        resolver_abi = load_abi("PublicResolver")
+        resolver = w3.eth.contract(address=resolver_addr, abi=resolver_abi)
+        resolved_name = resolver.functions.name(node).call()
+        if not resolved_name:
+            return err(messages.ENS_ADDRESS_NOT_FOUND, 404)
+
+        return jsonify(name=resolved_name, address=address)
+    except Exception:
+        return err(messages.INTERNAL_ERROR, 500)
+
+# ----- Endpoints de Garantia -----
+
+@app.get("/calls/<call_id>/guarantee")
+def call_guarantee(call_id):
+    """Devuelve informacion de la garantia de un llamado."""
+    if not is_valid_hash(call_id):
+        return err(messages.INVALID_CALLID, 400)
+    try:
+        cfp = get_cfp_contract(call_id)
+        call_data = database.get_call(call_id)
+        cfp_address = call_data["cfp_address"] if call_data else None
+        guarantee = cfp.functions.guaranteeAmount().call()
+        token_addr = cfp.functions.token().call()
+        finalized = cfp.functions.finalized().call()
+        return jsonify(
+            cfp=cfp_address,
+            guaranteeAmount=str(guarantee),
+            token=token_addr,
+            finalized=finalized,
+        )
+    except ValueError:
+        return err(messages.CALLID_NOT_FOUND, 404)
+    except Exception:
+        return err(messages.INTERNAL_ERROR, 500)
+
 # ----- Endpoints de escritura (POST) -----
 
 @app.post("/register-proposal")
@@ -632,6 +899,7 @@ def register_proposal():
     call_id     = request.form.get("callId")
     title       = request.form.get("title")
     description = request.form.get("description")
+    sender      = request.form.get("sender")
     uploaded_files = request.files.getlist("files")
 
     if call_id is None or title is None or description is None:
@@ -685,27 +953,53 @@ def register_proposal():
 
         proofs = merkle.compute_proposal_proofs(call_id, title, description, file_hashes)
 
-        send_transaction(
-            cfp_factory.functions.registerProposal(
-                bytes.fromhex(call_id[2:]), proposal_bytes
+        # Determinar si el llamado requiere garantia consultando la DB
+        call = database.get_call(call_id)
+        guarantee_amount = call["guarantee_amount"] if call else 0
+        requires_collateral = guarantee_amount > 0
+
+        if requires_collateral:
+            # Con garantia: el usuario debe llamar registerProposalWithCollateral
+            # via MetaMask. La API solo prepara y guarda los datos off-chain.
+            database.insert_proposal(proposal_id, call_id, title, description, proofs, sender)
+            prop_dir = os.path.join(UPLOAD_FOLDER, proposal_id)
+            os.makedirs(prop_dir, exist_ok=True)
+            for fr in file_records:
+                path = os.path.join(prop_dir, fr["name"])
+                with open(path, "wb") as out_file:
+                    out_file.write(fr["content"])
+                database.insert_proposal_upload(proposal_id, fr["hash"], fr["name"], path)
+
+            return jsonify(
+                message=messages.REQUIRES_COLLATERAL,
+                proposalId=proposal_id,
+                proof=proofs,
+                requiresCollateral=True,
+                cfpAddress=call["cfp_address"],
+                guaranteeAmount=guarantee_amount,
+            ), 201
+        else:
+            # Sin garantia: la API paga el gas y envia la transaccion
+            send_transaction(
+                cfp_factory.functions.registerProposal(
+                    bytes.fromhex(call_id[2:]), proposal_bytes
+                )
             )
-        )
-        database.insert_proposal(proposal_id, call_id, title, description, proofs)
+            database.insert_proposal(proposal_id, call_id, title, description, proofs, sender)
 
-        # Guardar archivos en disco y en DB
-        prop_dir = os.path.join(UPLOAD_FOLDER, proposal_id)
-        os.makedirs(prop_dir, exist_ok=True)
-        for fr in file_records:
-            path = os.path.join(prop_dir, fr["name"])
-            with open(path, "wb") as out_file:
-                out_file.write(fr["content"])
-            database.insert_proposal_upload(proposal_id, fr["hash"], fr["name"], path)
+            prop_dir = os.path.join(UPLOAD_FOLDER, proposal_id)
+            os.makedirs(prop_dir, exist_ok=True)
+            for fr in file_records:
+                path = os.path.join(prop_dir, fr["name"])
+                with open(path, "wb") as out_file:
+                    out_file.write(fr["content"])
+                database.insert_proposal_upload(proposal_id, fr["hash"], fr["name"], path)
 
-        return jsonify(
-            message=messages.OK,
-            proposalId=proposal_id,
-            proof=proofs
-        ), 201
+            return jsonify(
+                message=messages.OK,
+                proposalId=proposal_id,
+                proof=proofs
+            ), 201
     except Exception:
         return err(messages.INTERNAL_ERROR, 500)
 
@@ -790,12 +1084,20 @@ def create():
         title           = req.get("title")
         description     = req.get("description")
         signature       = req.get("signature")
+        guarantee_amount = req.get("guaranteeAmount", 0)
+        ens_name        = req.get("ensName", "")
+        closing_time    = req.get("closingTime")
 
-        # closing_time    = req.get("closingTime")
+        if not isinstance(guarantee_amount, int) or guarantee_amount < 0:
+            return err(messages.INVALID_AMOUNT, 400)
         if call_id is None or title is None or description is None or signature is None:
             return err(messages.MISSING_FIELD, 400)
         if not is_valid_hash(call_id):
             return err(messages.INVALID_CALLID, 400)
+        if closing_time is None:
+            return err(messages.MISSING_FIELD, 400)
+        if not isinstance(closing_time, int) or closing_time <= w3.eth.get_block("latest").timestamp:
+            return err(messages.PAST_CLOSING_TIME, 400)
 
         title = title.rstrip()
         description = description.rstrip()
@@ -836,8 +1138,11 @@ def create():
         if database.get_call(call_id):
             return err(messages.ALREADY_CREATED, 403)
 
-        database.insert_call(call_id, title, description)
-        return jsonify(message=messages.OK), 201
+        if ens_name and database.get_call_by_ens_name(ens_name):
+            return err("El nombre ENS del llamado ya existe", 409)
+
+        database.insert_call(call_id, title, description, guarantee_amount, ens_name)
+        return jsonify(message=messages.OK, guaranteeAmount=guarantee_amount, ensName=ens_name), 201
 
     except Exception:
         logging.exception("Exception in /create")

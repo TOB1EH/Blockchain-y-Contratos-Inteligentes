@@ -39,6 +39,11 @@ def transaction():
 def init_db():
     """Crea las tablas si no existen y garantiza que admin_state tenga una fila."""
     with transaction() as conn:
+        # Migracion: agregar columna sender si no existe
+        try:
+            conn.execute("ALTER TABLE proposals ADD COLUMN sender TEXT")
+        except Exception:
+            pass
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS registrations (
                 address     TEXT PRIMARY KEY,
@@ -47,12 +52,14 @@ def init_db():
             );
 
             CREATE TABLE IF NOT EXISTS calls (
-                call_id     TEXT PRIMARY KEY,
-                title       TEXT NOT NULL,
-                description TEXT NOT NULL,
-                creator     TEXT,
-                cfp_address TEXT,
-                status      TEXT NOT NULL DEFAULT 'pending'
+                call_id          TEXT PRIMARY KEY,
+                title            TEXT NOT NULL,
+                description      TEXT NOT NULL,
+                creator          TEXT,
+                cfp_address      TEXT,
+                guarantee_amount INTEGER NOT NULL DEFAULT 0,
+                ens_name         TEXT,
+                status           TEXT NOT NULL DEFAULT 'pending'
             );
 
             CREATE TABLE IF NOT EXISTS proposals (
@@ -60,7 +67,8 @@ def init_db():
                 call_id      TEXT NOT NULL,
                 title        TEXT NOT NULL,
                 description  TEXT NOT NULL,
-                proof_json   TEXT NOT NULL
+                proof_json   TEXT NOT NULL,
+                sender       TEXT
             );
 
             CREATE TABLE IF NOT EXISTS admin_state (
@@ -91,6 +99,24 @@ def init_db():
                 FOREIGN KEY(proposal_id) REFERENCES proposals(proposal_id)
             );
         """)
+
+        # Migracion: agregar guarantee_amount si no existe (bases viejas)
+        try:
+            conn.execute("ALTER TABLE calls ADD COLUMN guarantee_amount INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
+        # Migracion: agregar ens_name si no existe
+        try:
+            conn.execute("ALTER TABLE calls ADD COLUMN ens_name TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        # Migracion: indice unico para ens_name en calls
+        try:
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_calls_ens_name ON calls(ens_name) WHERE ens_name IS NOT NULL AND ens_name != ''")
+        except sqlite3.OperationalError:
+            pass
 
         # Garantizar que exista exactamente una fila en admin_state
         conn.execute(
@@ -152,6 +178,16 @@ def delete_registration(address: str) -> None:
         )
 
 
+def get_call_by_ens_name(ens_name: str) -> dict | None:
+    """Devuelve los datos de un llamado por su nombre ENS, o None si no existe."""
+    with transaction() as conn:
+        row = conn.execute(
+            "SELECT * FROM calls WHERE ens_name = ?",
+            (ens_name,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def get_call(call_id: str) -> dict | None:
     """Devuelve los datos de un llamado o None si no existe."""
     with transaction() as conn:
@@ -178,15 +214,15 @@ def get_all_calls(creator: str | None = None) -> list:
     return [dict(r) for r in rows]
 
 
-def insert_call(call_id: str, title: str, description: str) -> None:
+def insert_call(call_id: str, title: str, description: str, guarantee_amount: int = 0, ens_name: str = None) -> None:
     """Inserta un llamado nuevo en estado pending."""
     with transaction() as conn:
         conn.execute(
             """
-            INSERT INTO calls (call_id, title, description, status)
-            VALUES (?, ?, ?, 'pending')
+            INSERT INTO calls (call_id, title, description, guarantee_amount, ens_name, status)
+            VALUES (?, ?, ?, ?, ?, 'pending')
             """,
-            (call_id.lower(), title, description)
+            (call_id.lower(), title, description, guarantee_amount, ens_name)
         )
 
 
@@ -213,21 +249,22 @@ def get_proposal(proposal_id: str) -> dict | None:
 
 
 def insert_proposal(
-    proposal_id: str, call_id: str, title: str, description: str, proof: dict
+    proposal_id: str, call_id: str, title: str, description: str, proof: dict, sender: str = None
 ) -> None:
     """Inserta una propuesta con sus pruebas de Merkle."""
     with transaction() as conn:
         conn.execute(
             """
-            INSERT INTO proposals (proposal_id, call_id, title, description, proof_json)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO proposals (proposal_id, call_id, title, description, proof_json, sender)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 proposal_id.lower(),
                 call_id.lower(),
                 title,
                 description,
-                json.dumps(proof)
+                json.dumps(proof),
+                sender.lower() if sender else None
             )
         )
 
@@ -303,6 +340,16 @@ def get_proposal_uploads(proposal_id: str) -> list:
     rows = conn.execute(
         "SELECT file_hash, file_name, file_path FROM proposal_uploads WHERE proposal_id = ?",
         (proposal_id.lower(),)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_proposals_by_proponent(sender: str) -> list:
+    """Devuelve todas las propuestas registradas por un proponente."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT proposal_id, call_id, title, description FROM proposals WHERE sender = ? ORDER BY proposal_id",
+        (sender.lower(),)
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]

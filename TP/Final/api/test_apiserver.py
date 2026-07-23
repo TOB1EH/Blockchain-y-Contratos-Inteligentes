@@ -51,8 +51,9 @@ calls_created_schema = {
         "title": {"type": "string"},
         "description": {"type": "string"},
         "status": {"type": "string"},
+        "guaranteeAmount": {"type": "integer"},
     },
-    "required": ["creator", "cfp", "title", "description", "status"],
+    "required": ["creator", "cfp", "title", "description", "status", "guaranteeAmount"],
 }
 
 calls_pending_schema = {
@@ -61,8 +62,9 @@ calls_pending_schema = {
         "title": {"type": "string"},
         "description": {"type": "string"},
         "status": {"type": "string"},
+        "guaranteeAmount": {"type": "integer"},
     },
-    "required": ["title", "description", "status"],
+    "required": ["title", "description", "status", "guaranteeAmount"],
 }
 
 proposal_data_schema = {
@@ -172,6 +174,7 @@ FACTORY_MINIMAL_ABI = [
         "inputs": [
             {"name": "callId", "type": "bytes32"},
             {"name": "timestamp", "type": "uint256"},
+            {"name": "guaranteeAmount", "type": "uint256"},
         ],
         "outputs": [],
         "stateMutability": "nonpayable",
@@ -657,7 +660,7 @@ def send_create_tx(account: LocalAccount, call_id: str, closing_time: datetime) 
     factory, _ = get_factory_contract()
     call_id_bytes = bytes.fromhex(call_id[2:])
     closing_ts = int(closing_time.timestamp())
-    tx = factory.functions.create(call_id_bytes, closing_ts).build_transaction(
+    tx = factory.functions.create(call_id_bytes, closing_ts, 0).build_transaction(
         {
             "from": account.address,
             "nonce": w3.eth.get_transaction_count(account.address),
