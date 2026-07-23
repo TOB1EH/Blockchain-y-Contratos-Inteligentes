@@ -1,109 +1,163 @@
-# Trabajo Práctico Final
+# TP Final - Blockchain y Contratos Inteligentes
 
-Este trabajo implica una modificación y extensión del trabajo práctico 10. El examen final consistirá en la presentación del trabajo, explicación del código y de las decisiones de diseño.
+Sistema de gestion de llamados a presentacion de propuestas (CFP) con soporte
+para ENS (Ethereum Name Service), token ERC-20 con garantia de oferta y
+devolucion mediante mecanismo pull.
 
-El proyecto debe incluir tres componentes principales, tal como se especifica en el práctico 10:
+## Estructura del proyecto
 
-* Un conjunto de *smart contracts*, ubicados en el subdirectorio `contracts`. Dicho subdirectorio debe tener la estructura de un proyecto `hardhat` y debe ser posible desplegar todos los contratos relevantes ejecutando `npm run deploy` o `npm run deploy:localhost`. Los contratos deben satisfacer como mínimo las especificaciones del Práctico 10, incorporar las extensiones requeridas en este trabajo final y pasar todos los casos de prueba. El directorio `contracts` debe incluir además un `README.md` que describa la nueva estructura de contratos, explique las decisiones de diseño adoptadas y enumere los casos de prueba agregados para verificar las nuevas funcionalidades.
+```
+TP/Final/
+├── contracts/        # Smart contracts (Hardhat + Solidity 0.8.28)
+├── api/              # API REST (Flask + Web3.py)
+├── web/              # Interfaz web (Vue 3 + ethers.js v6)
+└── docs/             # Documentacion de diseno
+```
 
-* API REST, situada en el directorio `api`.
-Deben proveerse las instrucciones necesarias para desplegar y ejecutar el servidor que provee la API. El directorio `api` debe incluir un `README.md` que describa la estructura final de endpoints, explique las decisiones tomadas y enumere los casos de prueba agregados para verificar las nuevas funcionalidades.
+## Componentes
 
-* Interfaz web, en el directorio `web`. Deben proveerse las instrucciones para desplegar y ejecutar el servidor que provee esta interfaz. El directorio `web` debe incluir un `README.md` que describa el *stack* utilizado, la forma de lanzar el servidor y la forma de utilizar la aplicación.
+### contracts/
 
-Todo el trabajo final debe ubicarse bajo el directorio `TP/Final`, de modo que los tres componentes se encuentren en `TP/Final/contracts`, `TP/Final/api` y `TP/Final/web` respectivamente. Puede usarse una estructura de directorios diferente dentro de `TP/Final` si las herramientas utilizadas así lo requieren; en ese caso se deberá indicar claramente en qué directorio se encuentra cada uno de los tres componentes.
+9 contratos Solidity: ENSRegistry, FIFSRegistrar, PublicResolver,
+ReverseRegistrar, CFPGovernanceToken, CFPFactory, CFP, y utilidades.
 
-## Descripción general
+Despliegue completo via `npm run deploy`. Ver `contracts/README.md`.
 
-Debe proveerse un sistema de gestión de llamados a presentación de propuestas, con los criterios utilizados en el práctico 10.
-Pueden modificarse tanto los contratos como la API para proveer las funcionalidades requeridas. Si se agregan nuevos métodos o *endpoints* se deberá proveer lo siguiente:
+### api/
 
-* Documentación que especifique funcionalidad, argumentos, valores devueltos y condiciones de error, ya sea como comentarios en el código o en el `README.md` correspondiente.
+Servidor Flask con endpoints para registro de creadores, creacion de llamados,
+presentacion de propuestas, resolucion ENS, consulta de tokens y gestion de
+garantias. Ver `api/README.md`.
 
-* Casos de prueba
+### web/
 
-### Funcionalidades adicionales requeridas
+Frontend Vue 3 con paneles para cada rol: publico (ver llamados), creador
+(registro, crear llamado, finalizar), proponente (presentar propuesta, reclamar
+reembolso), admin (autorizar creadores), ENS, y Token. Ver `web/README.md`.
 
-#### ENS
+## Arquitectura
 
-A nivel de interfaz, deben reemplazarse todas las direcciones, tanto de contratos como de usuarios, por nombres registrados en un ENS.
+```
+MetaMask                Hardhat node (localhost:8545)
+   |                           |
+   |  ethers.js                |  Web3.py
+   |                           |
+   v                           v
+  Web (Vue 3:5173)  --->  API (Flask:5000)  --->  Contratos (Solidity)
+   |                           |
+   |  POST /api/*              |  Event listener
+   v                           v
+  Navegador                 SQLite (cfp.db)
+```
 
-Por lo tanto, el conjunto de *smart contracts* debe contener los contratos necesarios para implementar estas funcionalidades. Esto implica, como mínimo:
+## Arbol ENS
 
-* Un registro (*registry*).
-* Uno o más registradores (*registrars*).
-* Uno o más resolutores (*resolvers*).
+```
+cfp                     ← deployer (owner del CFPFactory)
+├── usuarios.cfp        ← FIFSRegistrar (autoregistro de usuarios)
+│   └── <nombre>.usuarios.cfp  ← registrado por el usuario via MetaMask
+├── llamados.cfp        ← deployer (la API registra nombres de llamados)
+│   └── <nombre>.llamados.cfp  ← registrado por la API al crear el llamado
+└── addr.reverse        ← ReverseRegistrar
+    └── <addr>.addr.reverse    ← configurado por el usuario via setName()
+```
 
-Estos contratos deben ajustarse a las especificaciones de la [documentación](https://docs.ens.domains/). En particular, para los [*resolvers*](https://docs.ens.domains/contract-api-reference/publicresolver) deben tenerse en cuenta las siguientes *interfaces*:
+## Puesta en marcha (Quickstart)
 
-* [EIP 137](https://eips.ethereum.org/EIPS/eip-137) Direcciones (`addr()`).
-* [EIP 165](https://eips.ethereum.org/EIPS/eip-165) Detección de *interface* (`supportsInterface()`).
-* [EIP 181](https://eips.ethereum.org/EIPS/eip-181) Resolución reversa (`name()`).
+### 1. Nodo blockchain
 
-Se usará como dominio de primer nivel el nombre `cfp`. Los dominios a utilizar serán:
+```bash
+cd TP/Final/contracts
+npx hardhat node
+```
 
-* `llamados.cfp`: Dominio donde están los nombres de los llamados. Cada llamado debe estar identificado por un nombre único.
-* `usuarios.cfp`: Dominio donde están los nombres de los usuarios, tanto creadores de los llamados como de presentadores de propuestas.
-* `addr.reverse`: Dominio para la resolución reversa.
+### 2. Desplegar contratos (otra terminal)
 
-El dueño del registro (*registry*) es el dueño del contrato factoría. Como mínimo, el dominio de primer nivel `cfp` y los subdominios `usuarios.cfp` y `llamados.cfp` quedan bajo su control.
+```bash
+cd TP/Final/contracts
+npm run deploy
+```
 
-**Registro de usuarios.** El dominio `usuarios.cfp` debe contar con un *registrar* de tipo FIFS (*first-in, first-served*) que permita a cualquier cuenta registrar, por sí misma y desde Metamask, un subnodo `<nombre>.usuarios.cfp` que aún no esté tomado. La cuenta que registra el nombre queda como dueña de su propio subnodo, de modo que pueda configurar tanto la resolución directa (`addr()`) como la reversa (`name()` en `addr.reverse`).
+Al finalizar imprime las variables de entorno necesarias. **Copialas** para el paso siguiente.
 
-Cada usuario debe registrar su nombre en `usuarios.cfp` **antes** de registrarse como creador. El registro del nombre es un paso previo e independiente del registro como creador (*on-chain* en la factoría y *off-chain* en la API).
+### 3. API (otra terminal)
 
-**Registro de llamados.** Los llamados creados deben registrarse con un nombre del dominio `llamados.cfp`. El nombre a asociar con el llamado se solicita en el proceso de creación del llamado.
+```bash
+cd TP/Final/api
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 
-**Manejo de colisiones.** Si el nombre elegido ya está tomado, la registración falla y el registrante debe elegir otro nombre antes de continuar. Esto aplica tanto a los nombres de usuarios como a los de llamados.
+export CFP_MNEMONIC="la frase que imprime el deploy"
+export CFP_FACTORY_ADDRESS="0x..."
+export CFP_ADMIN_ADDRESS="0x..."
+export CFP_ENS_REGISTRY="0x..."
+export CFP_ERC20_TOKEN="0x..."
 
-La interfaz web debe presentar al menos las siguientes funcionalidades adicionales:
+python3 apiserver.py
+```
 
-* Permitir que un usuario con Metamask registre, en forma previa al registro como creador, un nombre asociado con su cuenta en el dominio `usuarios.cfp`, configurando tanto la resolución directa como la reversa.
-* En el proceso de creación de un llamado se debe pedir el nombre a asociar con el llamado y registrarlo.
-* En todos los casos en los que se haga referencia a un contrato o a un usuario, debe figurar su nombre y no su dirección. Para cada consulta del reverso, debe verificarse también la resolución directa para detectar y evitar imposturas.
+### 4. Frontend (otra terminal)
 
-#### Uso de *tokens* ERC-20
+```bash
+cd TP/Final/web
+npm install
+npm run dev
+```
 
-En este sistema existen dos tipos de llamados: aquellos que requieren la presentación de una *garantía de oferta* y aquellos que no la requieren. Es decisión del creador, en el momento de creación del llamado, si la garantía es requerida y, en su caso, cuál es el monto en *tokens* exigido. Este monto es el mismo para todos los oferentes del llamado.
+Abrir `http://localhost:5173`.
 
-La implementación de ambos tipos de llamado puede resolverse mediante dos contratos distintos o mediante un único contrato en el que la garantía de oferta esté especificada con un monto igual a cero (sin garantía) o mayor que cero (con garantía). La elección y su justificación quedan a criterio del estudiante.
+### 5. MetaMask
 
-**Llamados sin garantía.** La presentación de propuestas es anónima y se realiza íntegramente a través de la API, exactamente como en el práctico 10. Ese circuito sigue funcionando sin cambios.
+1. Agregar red: `http://127.0.0.1:8545` (chainId `31337`)
+2. Importar cuenta con la mnemonic que imprime el deploy (o usar una de las cuentas prefinanciadas)
+3. Conectar la wallet en la web
 
-**Llamados con garantía.** La presentación deja de ser anónima. Solo está habilitada para usuarios con Metamask y requiere el registro previo del nombre del oferente en ENS (ver sección ENS). Presentar una propuesta implica depositar el monto de garantía en *tokens* en el contrato `CFP` del llamado, mediante el patrón `approve`/`transferFrom`: el oferente autoriza (`approve`) al contrato `CFP` a retirar el monto de garantía y la presentación ejecuta el `transferFrom` correspondiente.
+## Ejecutar tests
 
-**Finalización y devolución de garantías.** Por simplicidad, el sistema no resuelve quién es el ganador de la licitación. El creador del llamado debe poder dar por finalizado el proceso y determinar a quiénes corresponde la devolución de la garantía de oferta. Esto permite modelar tanto el caso en que el llamado se declara desierto (no se adjudica a nadie y se devuelve la garantía a todos los oferentes) como el caso en que hay uno o más ganadores. El monto a devolver a cada oferente es siempre el monto de garantía especificado en la creación del llamado, igual para todos.
+```bash
+# Contratos
+cd TP/Final/contracts && npm test
 
-La devolución utiliza un mecanismo de tipo *pull*: el contrato autoriza a cada oferente con derecho a devolución a transferir sus *tokens*, y es el propio oferente quien ejecuta el retiro.
+# API (entorno separado)
+cd TP/Final/api
+python3 -m venv venv-test
+source venv-test/bin/activate
+pip install -r pytest-requirements.txt
+pytest test_apiserver.py -v
 
-**Token ERC-20.** El *token* tiene un precio fijo en `ETH`, establecido en la creación del contrato ERC-20. El contrato debe permitir la compra y la redención de *tokens* contra `ETH` a ese precio fijo. La cantidad de decimales del *token* queda a criterio del estudiante.
+# Web
+cd TP/Final/web && npx vitest run
+```
 
-Para implementar esta funcionalidad se debe:
+## Requisitos del sistema
 
-* Desarrollar y desplegar un contrato que cumpla con el estándar ERC-20 y que permita la compra y redención de *tokens* con `ETH` a un precio fijo establecido en su creación.
+- Python 3
+- Node.js >= 18
+- npm
+- MetaMask (navegador)
 
-* Modificar los contratos existentes para que existan llamados que requieren la presentación de una garantía de oferta por un monto en *tokens* especificado por el creador, y permitan su devolución posterior mediante un mecanismo *pull*.
+## Resumen de funcionalidades
 
-* Modificar la API si se considera necesario.
+| Funcionalidad | Estado |
+|---------------|--------|
+| ENS: registro, resolucion directa e inversa | Implementado |
+| ENS: unicidad en usuarios.cfp y llamados.cfp | Implementado |
+| Token ERC-20: compra y redencion contra ETH | Implementado |
+| Garantia de oferta: deposito via approve/transferFrom | Implementado |
+| Finalizacion y reembolso pull | Implementado |
+| UI con nombres ENS en lugar de direcciones | Parcial |
+| Tests automatizados para nuevas funcionalidades | Pendiente |
 
-* Modificar la interfaz web para que:
+## Puesta en marcha
 
-  * Los creadores de llamados puedan especificar, al crear un llamado, si se requiere una garantía de oferta y, en su caso, el monto exigido.
-  * En el caso de llamados con garantía de oferta, se requiera el uso de Metamask y el registro previo en ENS, y la presentación de una oferta implique la transferencia de *tokens* del oferente al contrato `CFP` mediante `approve`/`transferFrom`. Debe existir además una forma en la cual el creador del `CFP` pueda dar por finalizado el procedimiento y habilitar la devolución de la garantía a los oferentes que determine, quienes la retiran mediante el mecanismo *pull*.
-  * Los potenciales oferentes puedan comprar y redimir *tokens*.
+Ver `docs/FLUJO_DE_PRUEBA.md` para instrucciones paso a paso.
 
-## Despliegue y puesta en marcha
+## Documentacion de diseno
 
-La entrega debe documentar de forma completa y reproducible todos los pasos necesarios para poner en funcionamiento el sistema desde cero, incluyendo:
-
-* El despliegue de **todos** los contratos relevantes: el contrato `CFPFactory` y los contratos de llamado, los contratos de ENS (*registry*, *registrars* y *resolvers*) y el contrato del *token* ERC-20. Debe ser posible desplegarlos mediante `npm run deploy` o `npm run deploy:localhost` desde el directorio `contracts`, manteniendo los requisitos de despliegue del práctico 10 (en particular, la generación de la frase mnemónica del *owner* y el financiamiento de las cuentas de Metamask).
-* El lanzamiento del servidor de la API.
-* El lanzamiento del servidor de la interfaz web.
-
-El proceso de despliegue debe emitir en forma explícita toda la información necesaria para configurar el entorno de ejecución de la API y de la interfaz web. Además de las variables ya requeridas por el práctico 10 (como mínimo `CFP_FACTORY_ADDRESS`, `CFP_MNEMONIC` y `CFP_ADMIN_ADDRESS`), deben informarse las direcciones de los nuevos contratos necesarias para que la API y la web puedan operar con ENS y con el *token* ERC-20 (por ejemplo, la dirección del *registry* de ENS y la dirección del contrato del *token*).
-
-La documentación de despliegue debe ser suficiente para que, a partir de un entorno limpio, se puedan desplegar los contratos y lanzar la API y la interfaz web siguiendo los pasos indicados, sin conocimiento previo del proyecto.
-
-## Entrega
-
-La entrega es única y comprende los tres componentes (contratos, API e interfaz web) con su código, documentación y casos de prueba. Debe realizarse a más tardar 7 días antes de la fecha del examen final.
+| Documento | Descripcion |
+|-----------|-------------|
+| `docs/ANALISIS_CONSIGNA.md` | Desglose de requisitos |
+| `docs/DECISIONES_DISENO.md` | 13 decisiones con justificacion |
+| `docs/PATRONES_EJEMPLOS.md` | Patrones de ejemplos del profesor |
+| `docs/FLUJO_DE_PRUEBA.md` | Flujo de prueba completo |

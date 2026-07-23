@@ -15,7 +15,7 @@ package-lock.json
 node_modules/
 artifacts/
 cache/
-AGENTS.md
+# AGENTS.md
 # Security / Sensitive patterns
 .env
 .env.local
