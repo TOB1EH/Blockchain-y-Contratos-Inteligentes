@@ -27,6 +27,7 @@ async function loadMyProposals() {
   if (!account.value) return
   loadingProposals.value = true
   try {
+    // GET /api/proposals?proponent=0x<cuenta>
     const res = await api.getProposals(account.value)
     const props = res.data.proposals || []
     myProposals.value = props
@@ -61,9 +62,11 @@ async function checkProposalsStatus(proposals) {
       const { cfpAddr } = callCache[p.call_id]
       if (!cfpAddr) continue
       const cfpContract = new Contract(cfpAddr, CFP_ABI, signer.value)
+      // Consulta on-chain si el llamado fue finalizado
       p._finalized = await cfpContract.finalized()
       if (p._finalized) {
         try {
+          // Consulta on-chain si esta propuesta fue aceptada
           p._accepted = await cfpContract.isProposalAccepted(p.proposal_id)
         } catch {
           p._accepted = false
@@ -77,11 +80,13 @@ async function checkProposalsStatus(proposals) {
   }
 }
 
+// Reclama el reembolso de la garantia de una propuesta rechazada
 async function doClaimRefund(callId, proposalId) {
   if (!signer.value) return
   claiming.value = true
   msg.value = 'Reclamando reembolso...'
   try {
+    // Obtener direccion del CFP del llamado desde la API
     const res = await api.getCallGuarantee(callId)
     if (res.status !== 200) {
       msg.value = 'No se pudo obtener la informacion del llamado'
@@ -92,12 +97,13 @@ async function doClaimRefund(callId, proposalId) {
       msg.value = 'El llamado no tiene direccion CFP'
       return
     }
+    // Instanciar el contrato CFP
     const cfpContract = new Contract(cfpAddr, CFP_ABI, signer.value)
     const tx = await cfpContract.claimRefund(proposalId)
     msg.value = `Reembolso enviado: ${tx.hash}. Esperando confirmacion...`
     await tx.wait()
     msg.value = 'Reembolso exitoso.'
-    await loadMyProposals()
+    await loadMyProposals() // recargar para reflejar el cambio
   } catch (e) {
     msg.value = `Error: ${e.message}`
   } finally {

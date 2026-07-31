@@ -18,6 +18,7 @@ function handlePhysicalFilesChange(event) {
   physicalFiles.value = Array.from(event.target.files)
 }
 
+// Entrega de archivos y validación contra el recibo
 async function deliverFiles() {
   if (!receiptFile.value || physicalFiles.value.length === 0) {
     msg.value = 'Debes subir tu recibo (.json) y al menos un archivo físico.'

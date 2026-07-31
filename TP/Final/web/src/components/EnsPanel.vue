@@ -52,6 +52,7 @@ const REVERSE_ABI = [
   'function setName(string memory name)',
 ]
 
+// Cargar direcciones ENS desde la API al montar el componente
 onMounted(async () => {
   try {
     const [ensRes, adminRes] = await Promise.all([
@@ -72,6 +73,7 @@ onMounted(async () => {
   }
 })
 
+// Funcion para resolver nombre a direccion
 async function doResolve() {
   if (!resolveName.value) return
   loading.value = true
@@ -91,6 +93,7 @@ async function doResolve() {
   }
 }
 
+// Funcion para resolver direccion a nombre (reverse)
 async function doReverse() {
   if (!reverseAddress.value) return
   loading.value = true
@@ -125,6 +128,7 @@ async function doReverse() {
   }
 }
 
+// Funcion para registrar un nombre en ENS
 async function doRegister() {
   if (!signer.value || !registerName.value || !registrarAddress.value) return
   if (account.value && adminAddress.value &&
@@ -151,20 +155,21 @@ async function doRegister() {
     registerMsg.value = 'Paso 1/4: Transaccion enviada, esperando confirmacion...'
     await tx1.wait()
 
-    // 2. Configurar resolver
+
+    // 2. Configurar resolver en ENSRegistry
     registerMsg.value = 'Paso 2/4: Configurando resolver...'
     const registry = new Contract(registryAddress.value, REGISTRY_ABI, signer.value)
     const namehash = ethers_namehash(fullName)
     const tx2 = await registry.setResolver(namehash, resolverAddress.value)
     await tx2.wait()
 
-    // 3. Configurar addr
+    // 3. Configurar addr en PublicResolver
     registerMsg.value = 'Paso 3/4: Configurando direccion...'
     const resolver = new Contract(resolverAddress.value, RESOLVER_ABI, signer.value)
     const tx3 = await resolver.setAddr(namehash, account.value)
     await tx3.wait()
 
-    // 4. Configurar resolucion inversa
+    // 4. Configurar resolucion inversa en ReverseRegistrar
     registerMsg.value = 'Paso 4/4: Configurando resolucion inversa...'
     const reverseReg = new Contract(reverseRegistrarAddress.value, REVERSE_ABI, signer.value)
     const tx4 = await reverseReg.setName(fullName)
@@ -179,6 +184,7 @@ async function doRegister() {
   }
 }
 
+// Calcula el namehash de un nombre ENS (ej: "alice.usuarios.cfp") a bytes32
 function ethers_namehash(name) {
   const labels = name.split('.')
   let node = '0x' + '00'.repeat(32)
@@ -189,6 +195,7 @@ function ethers_namehash(name) {
   return node
 }
 
+// Concatena dos hex strings (0x...) y devuelve un nuevo hex string
 function ethers_concat(a, b) {
   const aBytes = a.startsWith('0x') ? a.slice(2) : a
   const bBytes = b.startsWith('0x') ? b.slice(2) : b

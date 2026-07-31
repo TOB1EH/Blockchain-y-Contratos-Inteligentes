@@ -280,7 +280,7 @@ function toggleCall(callId) {
     expandedCallId.value = null
   } else {
     expandedCallId.value = callId
-    loadProposals(callId)
+    loadProposals(callId) // GET /api/calls/:id/proposals
   }
 }
 

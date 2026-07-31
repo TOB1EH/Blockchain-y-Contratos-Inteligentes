@@ -801,6 +801,7 @@ def ens_resolve():
                     node = keccak(node + keccak(text=label))
             return node
 
+        # Calcular namehash("alice.usuarios.cfp") → bytes32
         node = namehash(name)
 
         # Consultar resolver desde el registry
@@ -896,6 +897,7 @@ def register_proposal():
       - files (archivos adjuntos, uno o más)
     """
 
+    # Verifica que se hayan proporcionado todos los campos necesarios
     call_id     = request.form.get("callId")
     title       = request.form.get("title")
     description = request.form.get("description")
@@ -944,6 +946,7 @@ def register_proposal():
         return err(messages.INTERNAL_ERROR, 500)
 
     try:
+        # proposalId = Merkle root de [callId, keccak(title), keccak(desc)] + file_hashes
         proposal_id    = merkle.compute_proposal_id(call_id, title, description, file_hashes)
         proposal_bytes = bytes.fromhex(proposal_id[2:])
 
@@ -951,6 +954,7 @@ def register_proposal():
         if data[0] != ZERO:
             return err(messages.ALREADY_REGISTERED, 403)
 
+        # Pruebas Merkle para cada hoja (para el recibo)
         proofs = merkle.compute_proposal_proofs(call_id, title, description, file_hashes)
 
         # Determinar si el llamado requiere garantia consultando la DB
@@ -964,6 +968,7 @@ def register_proposal():
             database.insert_proposal(proposal_id, call_id, title, description, proofs, sender)
             prop_dir = os.path.join(UPLOAD_FOLDER, proposal_id)
             os.makedirs(prop_dir, exist_ok=True)
+            # Guarda archivos en disco y registra en la BD
             for fr in file_records:
                 path = os.path.join(prop_dir, fr["name"])
                 with open(path, "wb") as out_file:
@@ -985,6 +990,7 @@ def register_proposal():
                     bytes.fromhex(call_id[2:]), proposal_bytes
                 )
             )
+            # Guarda en la BD
             database.insert_proposal(proposal_id, call_id, title, description, proofs, sender)
 
             prop_dir = os.path.join(UPLOAD_FOLDER, proposal_id)
@@ -995,6 +1001,7 @@ def register_proposal():
                     out_file.write(fr["content"])
                 database.insert_proposal_upload(proposal_id, fr["hash"], fr["name"], path)
 
+            # Devolver la respuesta con el proposalId y las pruebas Merkle
             return jsonify(
                 message=messages.OK,
                 proposalId=proposal_id,
@@ -1300,11 +1307,12 @@ def deliver_files():
     """
     if 'receipt' not in request.form:
         return err(messages.MISSING_FIELD, 400)
-    
+
     files = request.files.getlist('files')
     if not files:
         return err(messages.MISSING_FIELD, 400)
     try:
+        # El recibo contiene el proposalId y las pruebas Merkle de los archivos
         receipt = json.loads(request.form['receipt'])
         proposal_id = receipt.get('proposalId')
         proof = receipt.get('proof', {})
@@ -1312,13 +1320,14 @@ def deliver_files():
         return err(messages.INVALID_PROPOSAL, 400)
     if not is_valid_hash(proposal_id):
         return err(messages.INVALID_PROPOSAL, 400)
-    # 1. Recuperar el llamado y la propuesta
+    # 1. Recuperar el llamado y la propuesta desde la DB
     prop_record = database.get_proposal(proposal_id)
     if not prop_record:
         return err(messages.PROPOSAL_NOT_FOUND, 404)
-    
+
     call_id = prop_record["call_id"]
     try:
+        # Recuperar el contrato del llamado para consultar su estado on-chain
         cfp = get_cfp_contract(call_id)
     except Exception:
         return err(messages.CALLID_NOT_FOUND, 404)
@@ -1339,7 +1348,7 @@ def deliver_files():
     # 5. Calcular hashes de los archivos subidos
     file_hashes = []
     file_records = []
-    
+
     for f in files:
         file_content = f.read()
         f.seek(0) # Resetear puntero por si acaso
@@ -1363,6 +1372,11 @@ def deliver_files():
     file_leaves = [bytes.fromhex(h[2:]) for h in file_hashes]
     root, _ = merkle.build_merkle_tree(file_leaves)
     files_root_hex = "0x" + root.hex()
+
+    # Este `filesRoot` es un arbol Merkle exclusivo de los archivos
+    # (sin `callId`, `title`, `description`). Sirve como sello criptografico
+    # del conjunto exacto de archivos entregados.
+
     # 8. Transacción on-chain (La API paga el Gas con su server_account)
     try:
         tx_receipt = send_transaction(
@@ -1373,6 +1387,7 @@ def deliver_files():
         )
     except Exception as e:
         return err(messages.INTERNAL_ERROR, 500)
+
     # 9. Guardar los archivos físicos y actualizar DB
     # Creamos subcarpeta para la propuesta
     prop_dir = os.path.join(UPLOAD_FOLDER, proposal_id)
@@ -1383,6 +1398,7 @@ def deliver_files():
         with open(path, "wb") as out_file:
             out_file.write(fr["content"])
         database.insert_proposal_file(proposal_id, fr["hash"], fr["name"], path)
+    # Respuesta al frontend
     return jsonify({
         "message": messages.OK,
         "filesRoot": files_root_hex,
